@@ -1,0 +1,316 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	_ "github.com/lib/pq"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+
+	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
+)
+
+// PostgresqlReconciler reconciles a Postgresql object
+type PostgresqlReconciler struct {
+	client.Client
+	Scheme      *runtime.Scheme
+	VaultClient *vault.Client
+}
+
+// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+// TODO(user): Modify the Reconcile function to compare the state specified by
+// the Postgresql object against the actual cluster state, and then
+// perform operations to make the cluster state reflect the state specified by
+// the user.
+//
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
+func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	// Fetch the Postgresql instance
+	postgresql := &instancev1alpha1.Postgresql{}
+	if err := r.Get(ctx, req.NamespacedName, postgresql); err != nil {
+		if errors.IsNotFound(err) {
+			// Object not found, return. Created objects are automatically garbage collected.
+			return ctrl.Result{}, nil
+		}
+		// Error reading the object - requeue the request.
+		log.Error(err, "Failed to get Postgresql")
+		return ctrl.Result{}, err
+	}
+
+	// Handle external PostgreSQL instance if specified
+	if postgresql.Spec.ExternalInstance != nil {
+		return r.reconcileExternalInstance(ctx, postgresql)
+	}
+
+	// TODO: Handle managed PostgreSQL instance creation
+	// For now, if no external instance is specified, we'll just return
+	log.Info("No external instance specified, managed instance creation not yet implemented")
+	return ctrl.Result{}, nil
+}
+
+// reconcileExternalInstance handles reconciliation for external PostgreSQL instances
+func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, postgresql *instancev1alpha1.Postgresql) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+	externalInstance := postgresql.Spec.ExternalInstance
+
+	// Set default port if not specified
+	port := externalInstance.Port
+	if port == 0 {
+		port = 5432
+	}
+
+	// Build connection address
+	connectionAddress := fmt.Sprintf("%s:%d", externalInstance.Address, port)
+	var username, password string
+	// Get credentials - try Vault first if available, otherwise use spec
+	//username := externalInstance.Username
+	//password := externalInstance.Password
+
+	// If Vault client is available and credentials are provided, store them in Vault
+	/*if r.VaultClient != nil && username != "" && password != "" {
+		err := r.VaultClient.StorePostgresqlCredentials(ctx, externalInstance.PostgresqlID, username, password)
+		if err != nil {
+			log.Error(err, "Failed to store credentials in Vault", "postgresqlID", externalInstance.PostgresqlID)
+			// Continue with reconciliation even if Vault storage fails
+		} else {
+			log.Info("Credentials stored in Vault", "postgresqlID", externalInstance.PostgresqlID)
+		}
+	}*/
+
+	// If credentials are not provided in spec, try to get them from Vault
+	if r.VaultClient != nil {
+		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
+		if err != nil {
+			log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+		} else {
+			//if username == "" {
+			username = vaultUsername
+			//}
+			//if password == "" {
+			password = vaultPassword
+			//}
+			log.Info("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
+		}
+	}
+
+	// Set default SSL mode if not specified
+	sslMode := externalInstance.SSLMode
+	if sslMode == "" {
+		sslMode = "require"
+	}
+
+	// Set default database if not specified
+	database := "postgres"
+
+	// Test PostgreSQL connection
+	connected, err := r.testPostgreSQLConnection(ctx, externalInstance.Address, port, database, username, password, sslMode)
+	if err != nil {
+		log.Error(err, "Failed to test PostgreSQL connection", "address", connectionAddress)
+	}
+
+	// Check if status needs to be updated
+	statusNeedsUpdate := false
+	desiredConnectionAddress := connectionAddress
+
+	// Only update status if something actually changed
+	if postgresql.Status.ConnectionAddress != desiredConnectionAddress {
+		postgresql.Status.ConnectionAddress = desiredConnectionAddress
+		statusNeedsUpdate = true
+	}
+
+	if postgresql.Status.Connected != connected {
+		postgresql.Status.Connected = connected
+		statusNeedsUpdate = true
+	}
+
+	// Update condition based on connection status
+	var conditionStatus metav1.ConditionStatus
+	var conditionReason, conditionMessage string
+	if connected {
+		conditionStatus = metav1.ConditionTrue
+		conditionReason = "Connected"
+		conditionMessage = fmt.Sprintf("Successfully connected to PostgreSQL at %s", connectionAddress)
+	} else {
+		conditionStatus = metav1.ConditionFalse
+		conditionReason = "ConnectionFailed"
+		if err != nil {
+			conditionMessage = fmt.Sprintf("Failed to connect to PostgreSQL with id %s at %s: %v", externalInstance.PostgresqlID, connectionAddress, err)
+		} else {
+			conditionMessage = fmt.Sprintf("Failed to connect to PostgreSQL with id %s at %s", externalInstance.PostgresqlID, connectionAddress)
+		}
+	}
+
+	readyCondition := findCondition(postgresql.Status.Conditions, "Ready")
+	if readyCondition == nil || readyCondition.Status != conditionStatus || readyCondition.Message != conditionMessage {
+		updateCondition(postgresql, "Ready", conditionStatus, conditionReason, conditionMessage)
+		statusNeedsUpdate = true
+	}
+
+	// Only update status if something changed
+	if statusNeedsUpdate {
+		now := metav1.Now()
+		postgresql.Status.LastConnectionAttempt = &now
+
+		log.Info("Testing PostgreSQL connection",
+			"uuid", externalInstance.PostgresqlID,
+			"address", externalInstance.Address,
+			"port", port,
+			"database", database,
+			"username", username,
+			"connected", connected)
+
+		// Update the status
+		if err := r.Status().Update(ctx, postgresql); err != nil {
+			log.Error(err, "Failed to update Postgresql status")
+			return ctrl.Result{}, err
+		}
+
+		if connected {
+			log.Info("Successfully connected to PostgreSQL instance", "address", connectionAddress)
+		} else {
+			log.Info("Failed to connect to PostgreSQL instance", "address", connectionAddress, "error", err)
+		}
+	}
+
+	// Requeue for periodic connectivity check (default: 30 seconds)
+	// This ensures we periodically check the connection even if nothing changed
+	requeueInterval := 30 * time.Second
+	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+}
+
+// testPostgreSQLConnection tests the connection to a PostgreSQL instance
+func (r *PostgresqlReconciler) testPostgreSQLConnection(ctx context.Context, host string, port int32, database, username, password, sslMode string) (bool, error) {
+	// Build connection string
+	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
+		host, port, username, password, database, sslMode)
+
+	// Create a context with timeout for the connection test
+	connCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// Open connection
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return false, fmt.Errorf("failed to open database connection: %w", err)
+	}
+	defer db.Close()
+
+	// Test the connection with a simple query
+	var result int
+	err = db.QueryRowContext(connCtx, "SELECT 1").Scan(&result)
+	if err != nil {
+		return false, fmt.Errorf("failed to query database: %w", err)
+	}
+
+	// Verify we got the expected result
+	if result != 1 {
+		return false, fmt.Errorf("unexpected query result: %d", result)
+	}
+
+	return true, nil
+}
+
+// updateCondition updates or adds a condition to the Postgresql status
+func updateCondition(postgresql *instancev1alpha1.Postgresql, conditionType string, status metav1.ConditionStatus, reason, message string) {
+	now := metav1.Now()
+	condition := metav1.Condition{
+		Type:               conditionType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		LastTransitionTime: now,
+		ObservedGeneration: postgresql.Generation,
+	}
+
+	// Find and update existing condition or add new one
+	found := false
+	for i, c := range postgresql.Status.Conditions {
+		if c.Type == conditionType {
+			postgresql.Status.Conditions[i] = condition
+			found = true
+			break
+		}
+	}
+	if !found {
+		postgresql.Status.Conditions = append(postgresql.Status.Conditions, condition)
+	}
+}
+
+// findCondition finds a condition by type in the conditions slice
+func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *PostgresqlReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Create a predicate that ignores status-only updates
+	ignoreStatusUpdates := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Reconcile if spec changed
+			oldObj := e.ObjectOld.(*instancev1alpha1.Postgresql)
+			newObj := e.ObjectNew.(*instancev1alpha1.Postgresql)
+
+			// Reconcile if generation changed (spec changed)
+			if oldObj.Generation != newObj.Generation {
+				return true
+			}
+
+			// Reconcile if deletion timestamp changed
+			if oldObj.DeletionTimestamp != newObj.DeletionTimestamp {
+				return true
+			}
+
+			// Ignore status-only updates
+			return false
+		},
+		CreateFunc:  func(e event.CreateEvent) bool { return true },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
+		GenericFunc: func(e event.GenericEvent) bool { return true },
+	}
+
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&instancev1alpha1.Postgresql{}).
+		Named("postgresql").
+		WithEventFilter(ignoreStatusUpdates).
+		Complete(r)
+}

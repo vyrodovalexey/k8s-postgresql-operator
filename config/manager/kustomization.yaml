@@ -1,0 +1,8 @@
+resources:
+- manager.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: controller
+  newName: vyrodovalexey/k8s-postgresql-operator
+  newTag: "0.26"

@@ -1,0 +1,76 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1alpha1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// UserSpec defines the desired state of User
+type UserSpec struct {
+	// Username is the PostgreSQL username to create
+	// +required
+	Username string `json:"username"`
+
+	// Password is the password for the PostgreSQL user
+	// +required
+	//Password string `json:"password"`
+
+	// PostgresqlID is the ID of the PostgreSQL instance where this user should be created
+	// +required
+	PostgresqlID string `json:"postgresqlID"`
+}
+
+// UserStatus defines the observed state of User
+type UserStatus struct {
+	// Created indicates whether the user has been successfully created in PostgreSQL
+	// +optional
+	Created bool `json:"created,omitempty"`
+
+	// LastSyncAttempt is the timestamp of the last sync attempt
+	// +optional
+	LastSyncAttempt *metav1.Time `json:"lastSyncAttempt,omitempty"`
+
+	// Conditions represent the latest available observations of the User state
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+
+// User is the Schema for the users API
+type User struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   UserSpec   `json:"spec,omitempty"`
+	Status UserStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+// UserList contains a list of User
+type UserList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []User `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&User{}, &UserList{})
+}
