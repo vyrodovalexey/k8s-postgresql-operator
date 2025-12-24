@@ -28,14 +28,16 @@ var log = logf.Log.WithName("vault")
 
 // Client wraps the Vault API client
 type Client struct {
-	client *api.Client
+	client          *api.Client
+	vaultMountPoint string
+	vaultSecretPath string
 }
 
 // NewClient creates a new Vault client using Kubernetes authentication
 // VAULT_ADDR: Vault server address (required)
 // VAULT_ROLE: Vault role for Kubernetes authentication (required)
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
-func NewClient(vaultAddr, vaultRole, tokenPath string) (*Client, error) {
+func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
 
 	if vaultRole == "" {
 		return nil, fmt.Errorf("VAULT_ROLE environment variable is not set (required for Kubernetes auth)")
@@ -75,15 +77,15 @@ func NewClient(vaultAddr, vaultRole, tokenPath string) (*Client, error) {
 
 	log.Info("Successfully authenticated with Vault using Kubernetes auth", "role", vaultRole)
 
-	return &Client{client: client}, nil
+	return &Client{client: client, vaultMountPoint: vaultMountPoint, vaultSecretPath: vaultSecretPath}, nil
 }
 
 // GetPostgresqlCredentials retrieves PostgreSQL credentials from Vault KV store
 func (c *Client) GetPostgresqlCredentials(ctx context.Context, postgresqlID string) (username, password string, err error) {
-	kv2Path := fmt.Sprintf("pdb/%s/admin", postgresqlID)
+	kv2Path := fmt.Sprintf("%s/%s/admin", c.vaultSecretPath, postgresqlID)
 
 	// Use KVv2 to read the secret
-	secret, err := c.client.KVv2("secret").Get(ctx, kv2Path)
+	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read secret from Vault: %w", err)
 	}
@@ -108,10 +110,10 @@ func (c *Client) GetPostgresqlCredentials(ctx context.Context, postgresqlID stri
 
 // GetPostgresqlUserCredentials retrieves PostgreSQL credentials from Vault KV store
 func (c *Client) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID, username string) (password string, err error) {
-	kv2Path := fmt.Sprintf("pdb/%s/%s", postgresqlID, username)
+	kv2Path := fmt.Sprintf("%s/%s/%s", c.vaultSecretPath, postgresqlID, username)
 
 	// Use KVv2 to read the secret
-	secret, err := c.client.KVv2("secret").Get(ctx, kv2Path)
+	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
 		return "", fmt.Errorf("failed to read secret from Vault: %w", err)
 	}
@@ -142,8 +144,8 @@ func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlI
 	// Write to KV v2 (if using KV v2, the path should be secret/data/{postgresqlID})
 	// For KV v1, use the path as-is
 	// Try KV v2 first (most common)
-	kv2Path := fmt.Sprintf("pdb/%s/%s", postgresqlID, username)
-	_, err := c.client.KVv2("secret").Put(context.Background(), kv2Path, data)
+	kv2Path := fmt.Sprintf("%s/%s/%s", c.vaultSecretPath, postgresqlID, username)
+	_, err := c.client.KVv2(c.vaultMountPoint).Put(context.Background(), kv2Path, data)
 
 	if err != nil {
 		// If KV v2 fails, try KV v1

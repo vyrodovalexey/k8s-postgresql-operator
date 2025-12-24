@@ -186,7 +186,7 @@ func main() {
 	// Initialize Vault client if environment variables are set
 	var vaultClient *vault.Client
 	if cfg.VaultAddr != "" {
-		vc, err := vault.NewClient(cfg.VaultAddr, cfg.VaultRole, cfg.VaultK8sTokenPath)
+		vc, err := vault.NewClient(cfg.VaultAddr, cfg.VaultRole, cfg.VaultK8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath)
 		if err != nil {
 			setupLog.Error(err, "unable to create Vault client, continuing without Vault integration")
 		} else {
