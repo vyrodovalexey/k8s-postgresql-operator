@@ -60,15 +60,14 @@ spec:
       containers:
       - env:
         - name: VAULT_ADDR
-          value: "http://192.168.0.55:8200"
+          value: "http://192.168.0.13:8200"
         - name: VAULT_ROLE
           value: "k8s-postgresql-operator"
-        - name: VAULT_TOKEN_PATH
-          value: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        - name: ENABLE_LEADER_ELECTION
+          value: "true"
         command:
         - /app/manager
         args:
-          - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
