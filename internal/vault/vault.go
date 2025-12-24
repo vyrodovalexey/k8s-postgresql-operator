@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
-	"os"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -36,17 +35,12 @@ type Client struct {
 // VAULT_ADDR: Vault server address (required)
 // VAULT_ROLE: Vault role for Kubernetes authentication (required)
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
-func NewClient() (*Client, error) {
-	vaultAddr := os.Getenv("VAULT_ADDR")
-	if vaultAddr == "" {
-		return nil, fmt.Errorf("VAULT_ADDR environment variable is not set")
-	}
+func NewClient(vaultAddr, vaultRole, tokenPath string) (*Client, error) {
 
-	vaultRole := os.Getenv("VAULT_ROLE")
 	if vaultRole == "" {
 		return nil, fmt.Errorf("VAULT_ROLE environment variable is not set (required for Kubernetes auth)")
 	}
-	log.Info("Vault ENV", "VAULT_ADDR", vaultAddr, "VAULT_ROLE", vaultRole)
+	log.Info("Vault ENV", "VAULT_ADDR", vaultAddr, "VAULT_ROLE", vaultRole, "VAULT_K8S_TOKEN_PATH", tokenPath)
 	config := api.DefaultConfig()
 	config.Address = vaultAddr
 
@@ -55,8 +49,6 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("failed to create Vault client: %w", err)
 	}
 
-	// Determine the path to the Kubernetes service account token
-	tokenPath := os.Getenv("VAULT_TOKEN_PATH")
 	if tokenPath == "" {
 		// Default to the standard Kubernetes service account token path
 		tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
@@ -84,33 +76,6 @@ func NewClient() (*Client, error) {
 	log.Info("Successfully authenticated with Vault using Kubernetes auth", "role", vaultRole)
 
 	return &Client{client: client}, nil
-}
-
-// StorePostgresqlCredentials stores PostgreSQL credentials in Vault KV store
-// Path: /secret/{postgresqlID}
-// Keys: admin_username, admin_password
-func (c *Client) StorePostgresqlCredentials(ctx context.Context, postgresqlID, username, password string) error {
-
-	// Prepare the data to store
-	data := map[string]interface{}{
-		"admin_username": username,
-		"admin_password": password,
-	}
-
-	// Write to KV v2 (if using KV v2, the path should be secret/data/{postgresqlID})
-	// For KV v1, use the path as-is
-	// Try KV v2 first (most common)
-	kv2Path := fmt.Sprintf("pdb/%s", postgresqlID)
-	_, err := c.client.KVv2("secret").Put(context.Background(), kv2Path, data)
-
-	if err != nil {
-		// If KV v2 fails, try KV v1
-		log.Info("KV v2 write failed", "error", err, "path", kv2Path)
-	} else {
-		log.Info("Credentials stored in Vault KV v2", "path", kv2Path)
-	}
-
-	return nil
 }
 
 // GetPostgresqlCredentials retrieves PostgreSQL credentials from Vault KV store
