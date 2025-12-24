@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"go.uber.org/zap"
 	"strings"
 	"time"
 
@@ -32,7 +33,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
@@ -41,6 +41,7 @@ type DatabaseReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	VaultClient *vault.Client
+	Log         *zap.SugaredLogger
 }
 
 // +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=databases,verbs=get;list;watch;create;update;patch;delete
@@ -50,7 +51,6 @@ type DatabaseReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
 
 	// Fetch the Database instance
 	database := &instancev1alpha1.Database{}
@@ -58,29 +58,29 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		log.Error(err, "Failed to get Database")
+		r.Log.Error(err, "Failed to get Database")
 		return ctrl.Result{}, err
 	}
 
 	// Find PostgreSQL instance by PostgresqlID
 	postgresql, err := r.findPostgresqlByID(ctx, database.Spec.PostgresqlID)
 	if err != nil {
-		log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", database.Spec.PostgresqlID)
+		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", database.Spec.PostgresqlID)
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
 			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", database.Spec.PostgresqlID, err))
 		if err := r.Status().Update(ctx, database); err != nil {
-			log.Error(err, "Failed to update Database status")
+			r.Log.Error(err, "Failed to update Database status")
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Check if PostgreSQL instance is connected
 	if !postgresql.Status.Connected {
-		log.Info("PostgreSQL instance is not connected, waiting", "postgresqlID", database.Spec.PostgresqlID)
+		r.Log.Infow("PostgreSQL instance is not connected, waiting", "postgresqlID", database.Spec.PostgresqlID)
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
 			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", database.Spec.PostgresqlID))
 		if err := r.Status().Update(ctx, database); err != nil {
-			log.Error(err, "Failed to update Database status")
+			r.Log.Error(err, "Failed to update Database status")
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -88,11 +88,11 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", database.Spec.PostgresqlID)
+		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", database.Spec.PostgresqlID)
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, database); err != nil {
-			log.Error(err, "Failed to update Database status")
+			r.Log.Error(err, "Failed to update Database status")
 		}
 		return ctrl.Result{}, nil
 	}
@@ -111,22 +111,22 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if r.VaultClient != nil {
 		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
 		if err != nil {
-			log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
 		} else {
 			postgresUsername = vaultUsername
 			postgresPassword = vaultPassword
-			log.Info("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
 		}
 	} else {
 		// Use password from spec if Vault is not available
-		log.Info("Vault client not available")
+		r.Log.Infow("Vault client not available")
 	}
 
 	// Create or update database in PostgreSQL
 	err = r.createOrUpdateDatabase(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
 		database.Spec.Database, database.Spec.Owner)
 	if err != nil {
-		log.Error(err, "Failed to create/update database in PostgreSQL", "database", database.Spec.Database)
+		r.Log.Error(err, "Failed to create/update database in PostgreSQL", "database", database.Spec.Database)
 		database.Status.Created = false
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "CreateFailed",
 			fmt.Sprintf("Failed to create database: %v", err))
@@ -134,7 +134,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		database.Status.Created = true
 		updateDatabaseCondition(database, "Ready", metav1.ConditionTrue, "Created",
 			fmt.Sprintf("Database %s successfully created in PostgreSQL", database.Spec.Database))
-		log.Info("Database successfully created in PostgreSQL", "PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database)
+		r.Log.Infow("Database successfully created in PostgreSQL", "PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database)
 	}
 
 	now := metav1.Now()
@@ -142,11 +142,11 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Update the status
 	if err := r.Status().Update(ctx, database); err != nil {
-		log.Error(err, "Failed to update Database status")
+		r.Log.Error(err, "Failed to update Database status")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Successfully reconciled Database", "database", database.Spec.Database)
+	r.Log.Infow("Successfully reconciled Database", "database", database.Spec.Database)
 	return ctrl.Result{}, nil
 }
 

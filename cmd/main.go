@@ -19,9 +19,10 @@ package main
 import (
 	"crypto/tls"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/logging"
+	"go.uber.org/zap"
 	"os"
 	"path/filepath"
-
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -32,7 +33,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -44,8 +44,7 @@ import (
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	scheme = runtime.NewScheme()
 )
 
 func init() {
@@ -64,11 +63,9 @@ func main() {
 
 	var tlsOpts []func(*tls.Config)
 
-	opts := zap.Options{
-		Development: true,
-	}
+	lg := logging.NewLogging(zap.InfoLevel)
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	lg.Infow("Server starting with")
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -77,7 +74,7 @@ func main() {
 	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
 	// - https://github.com/advisories/GHSA-4374-p667-p6c8
 	disableHTTP2 := func(c *tls.Config) {
-		setupLog.Info("disabling http/2")
+		lg.Infow("disabling http/2")
 		c.NextProtos = []string{"http/1.1"}
 	}
 
@@ -92,7 +89,7 @@ func main() {
 	webhookTLSOpts := tlsOpts
 
 	if len(cfg.WebhookCertPath) > 0 {
-		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
+		lg.Info("Initializing webhook certificate watcher using provided certificates",
 			"webhook-cert-path", cfg.WebhookCertPath, "webhook-cert-name", cfg.WebhookCertName, "webhook-cert-key", cfg.WebhookCertKey)
 
 		var err error
@@ -101,7 +98,7 @@ func main() {
 			filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertKey),
 		)
 		if err != nil {
-			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
+			lg.Error(err, "Failed to initialize webhook certificate watcher")
 			os.Exit(1)
 		}
 
@@ -141,7 +138,7 @@ func main() {
 	// managed by cert-manager for the metrics server.
 	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
 	if len(cfg.MetricsCertPath) > 0 {
-		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
+		lg.Infow("Initializing metrics certificate watcher using provided certificates",
 			"metrics-cert-path", cfg.MetricsCertPath, "metrics-cert-name", cfg.MetricsCertName, "metrics-cert-key", cfg.MetricsCertKey)
 
 		var err error
@@ -150,7 +147,7 @@ func main() {
 			filepath.Join(cfg.MetricsCertPath, cfg.MetricsCertKey),
 		)
 		if err != nil {
-			setupLog.Error(err, "to initialize metrics certificate watcher", "error", err)
+			lg.Errorw("to initialize metrics certificate watcher", "error", err)
 			os.Exit(1)
 		}
 
@@ -179,30 +176,32 @@ func main() {
 		// LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
+		lg.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
 	// Initialize Vault client if environment variables are set
 	var vaultClient *vault.Client
 	if cfg.VaultAddr != "" {
-		vc, err := vault.NewClient(cfg.VaultAddr, cfg.VaultRole, cfg.VaultK8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath)
+		vc, err := vault.NewClient(lg, cfg.VaultAddr, cfg.VaultRole, cfg.VaultK8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath)
 		if err != nil {
-			setupLog.Error(err, "unable to create Vault client, continuing without Vault integration")
+			lg.Error(err, "unable to create Vault client")
+			os.Exit(1)
 		} else {
 			vaultClient = vc
-			setupLog.Info("Vault client initialized successfully")
+			lg.Infow("Vault client initialized successfully")
 		}
 	} else {
-		setupLog.Info("VAULT_ADDR not set, Vault integration disabled")
+		lg.Infow("VAULT_ADDR not set, Vault integration disabled")
 	}
 
 	if err := (&controller.PostgresqlReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
 		VaultClient: vaultClient,
+		Log:         lg,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Postgresql")
+		lg.Error(err, "unable to create controller", "controller", "Postgresql")
 		os.Exit(1)
 	}
 
@@ -210,8 +209,9 @@ func main() {
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
 		VaultClient: vaultClient,
+		Log:         lg,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "User")
+		lg.Error(err, "unable to create controller", "controller", "User")
 		os.Exit(1)
 	}
 
@@ -219,40 +219,41 @@ func main() {
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
 		VaultClient: vaultClient,
+		Log:         lg,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Database")
+		lg.Error(err, "unable to create controller", "controller", "Database")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
-		setupLog.Info("Adding metrics certificate watcher to postgresql operator")
+		lg.Info("Adding metrics certificate watcher to postgresql operator")
 		if err := mgr.Add(metricsCertWatcher); err != nil {
-			setupLog.Error(err, "unable to add metrics certificate watcher to manager")
+			lg.Error(err, "unable to add metrics certificate watcher to manager")
 			os.Exit(1)
 		}
 	}
 
 	if webhookCertWatcher != nil {
-		setupLog.Info("Adding webhook certificate watcher to postgresql operator")
+		lg.Info("Adding webhook certificate watcher to postgresql operator")
 		if err := mgr.Add(webhookCertWatcher); err != nil {
-			setupLog.Error(err, "unable to add webhook certificate watcher to manager")
+			lg.Error(err, "unable to add webhook certificate watcher to manager")
 			os.Exit(1)
 		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up health check")
+		lg.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up ready check")
+		lg.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting postgresql operator")
+	lg.Info("starting postgresql operator")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem postgresql operator")
+		lg.Error(err, "problem postgresql operator")
 		os.Exit(1)
 	}
 }

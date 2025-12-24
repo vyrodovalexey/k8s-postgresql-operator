@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"go.uber.org/zap"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -29,7 +30,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
@@ -41,6 +41,7 @@ type PostgresqlReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	VaultClient *vault.Client
+	Log         *zap.SugaredLogger
 }
 
 // +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls,verbs=get;list;watch;create;update;patch;delete
@@ -58,7 +59,6 @@ type PostgresqlReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
 
 	// Fetch the Postgresql instance
 	postgresql := &instancev1alpha1.Postgresql{}
@@ -68,7 +68,7 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request.
-		log.Error(err, "Failed to get Postgresql")
+		r.Log.Error(err, "Failed to get Postgresql")
 		return ctrl.Result{}, err
 	}
 
@@ -79,13 +79,13 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// TODO: Handle managed PostgreSQL instance creation
 	// For now, if no external instance is specified, we'll just return
-	log.Info("No external instance specified, managed instance creation not yet implemented")
+	r.Log.Info("No external instance specified, managed instance creation not yet implemented")
 	return ctrl.Result{}, nil
 }
 
 // reconcileExternalInstance handles reconciliation for external PostgreSQL instances
 func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, postgresql *instancev1alpha1.Postgresql) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
+
 	externalInstance := postgresql.Spec.ExternalInstance
 
 	// Set default port if not specified
@@ -105,10 +105,10 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	/*if r.VaultClient != nil && username != "" && password != "" {
 		err := r.VaultClient.StorePostgresqlCredentials(ctx, externalInstance.PostgresqlID, username, password)
 		if err != nil {
-			log.Error(err, "Failed to store credentials in Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Error(err, "Failed to store credentials in Vault", "postgresqlID", externalInstance.PostgresqlID)
 			// Continue with reconciliation even if Vault storage fails
 		} else {
-			log.Info("Credentials stored in Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Info("Credentials stored in Vault", "postgresqlID", externalInstance.PostgresqlID)
 		}
 	}*/
 
@@ -116,7 +116,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	if r.VaultClient != nil {
 		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
 		if err != nil {
-			log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
 		} else {
 			//if username == "" {
 			username = vaultUsername
@@ -124,7 +124,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 			//if password == "" {
 			password = vaultPassword
 			//}
-			log.Info("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Info("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
 		}
 	}
 
@@ -140,7 +140,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	// Test PostgreSQL connection
 	connected, err := r.testPostgreSQLConnection(ctx, externalInstance.Address, port, database, username, password, sslMode)
 	if err != nil {
-		log.Error(err, "Failed to test PostgreSQL connection", "address", connectionAddress)
+		r.Log.Error(err, "Failed to test PostgreSQL connection", "address", connectionAddress)
 	}
 
 	// Check if status needs to be updated
@@ -186,7 +186,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 		now := metav1.Now()
 		postgresql.Status.LastConnectionAttempt = &now
 
-		log.Info("Testing PostgreSQL connection",
+		r.Log.Info("Testing PostgreSQL connection",
 			"uuid", externalInstance.PostgresqlID,
 			"address", externalInstance.Address,
 			"port", port,
@@ -196,14 +196,14 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 
 		// Update the status
 		if err := r.Status().Update(ctx, postgresql); err != nil {
-			log.Error(err, "Failed to update Postgresql status")
+			r.Log.Error(err, "Failed to update Postgresql status")
 			return ctrl.Result{}, err
 		}
 
 		if connected {
-			log.Info("Successfully connected to PostgreSQL instance", "address", connectionAddress)
+			r.Log.Info("Successfully connected to PostgreSQL instance", "address", connectionAddress)
 		} else {
-			log.Info("Failed to connect to PostgreSQL instance", "address", connectionAddress, "error", err)
+			r.Log.Info("Failed to connect to PostgreSQL instance", "address", connectionAddress, "error", err)
 		}
 	}
 
