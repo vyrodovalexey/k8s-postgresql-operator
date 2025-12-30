@@ -92,7 +92,7 @@ spec:
           - containerPort: 8443
             name: https
           - containerPort: 8081
-            name: httpprobe
+            name: http-probe
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

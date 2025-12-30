@@ -128,29 +128,45 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// Get user password from Vault or generate/store it
 	if r.VaultClient != nil {
 		vaultUserPassword, err := r.VaultClient.GetPostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username)
-		if err != nil || vaultUserPassword == "" {
-			r.Log.Info("User credentials not found in Vault, generating new password ", "postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username, " error: ", err)
-			// Generate random password
+		credentialsExist := err == nil && vaultUserPassword != ""
 
-			// If no password in spec, generate a secure random one
+		// Generate new password if:
+		// 1. Credentials don't exist in Vault (regardless of updatePassword option)
+		// 2. Credentials exist and updatePassword is true
+		shouldGeneratePassword := !credentialsExist || user.Spec.UpdatePassword
+
+		if shouldGeneratePassword {
+			if !credentialsExist {
+				r.Log.Info("User credentials not found in Vault, generating new password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username, "error", err)
+			} else if user.Spec.UpdatePassword {
+				r.Log.Info("updatePassword is true, regenerating password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			}
+
+			// Generate random password
 			generatedPassword, err := generateRandomPassword(32)
 			if err != nil {
-				r.Log.Error(err, "Failed to generate random password", " postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
+				r.Log.Error(err, "Failed to generate random password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 				return ctrl.Result{}, fmt.Errorf("failed to generate random password: %w", err)
 			}
 			dbPassword = generatedPassword
-			r.Log.Info("Generated random password for user, ", "postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
+			r.Log.Info("Generated random password for user", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 
+			// Store/update password in Vault
 			err = r.VaultClient.StorePostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username, dbPassword)
 			if err != nil {
-				r.Log.Error(err, "Failed to store user credentials in Vault, ", " postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
+				r.Log.Error(err, "Failed to store user credentials in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 				// Continue with reconciliation even if Vault storage fails
 			} else {
-				r.Log.Info("User credentials stored in Vault ", "postgresqlID: ", user.Spec.PostgresqlID, "user: ", user.Spec.Username)
+				if credentialsExist {
+					r.Log.Info("User credentials updated in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				} else {
+					r.Log.Info("User credentials stored in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				}
 			}
 		} else {
+			// Use existing password from Vault
 			dbPassword = vaultUserPassword
-			r.Log.Info("User credentials retrieved from Vault ", "postgresqlID:", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
+			r.Log.Info("User credentials retrieved from Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 		}
 	} else {
 		// Use password from spec if Vault is not available

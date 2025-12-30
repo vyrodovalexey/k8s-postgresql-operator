@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: k8s-postgresql-operator
     app.kubernetes.io/managed-by: kustomize
-  name: user-sample
+  name: user-wrong-postgresqlid
 spec:
   # Username is the PostgreSQL username to create
   username: "myuser"
@@ -14,6 +14,6 @@ spec:
   
   # PostgresqlID is the ID of the PostgreSQL instance where this user should be created
   # This must match the postgresqlID in the Postgresql CRD
-  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FD"
-  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FO"
+  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FO"
 

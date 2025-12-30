@@ -43,11 +43,15 @@ spec:
                 description: PostgresqlID is the ID of the PostgreSQL instance where
                   this user should be created
                 type: string
+              updatePassword:
+                description: Password is the password for the PostgreSQL user
+                type: boolean
               username:
                 description: Username is the PostgreSQL username to create
                 type: string
             required:
             - postgresqlID
+            - updatePassword
             - username
             type: object
           status:

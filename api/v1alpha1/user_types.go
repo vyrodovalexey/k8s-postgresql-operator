@@ -28,7 +28,7 @@ type UserSpec struct {
 
 	// Password is the password for the PostgreSQL user
 	// +required
-	//Password string `json:"password"`
+	UpdatePassword bool `json:"updatePassword"`
 
 	// PostgresqlID is the ID of the PostgreSQL instance where this user should be created
 	// +required

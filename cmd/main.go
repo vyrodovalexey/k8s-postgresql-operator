@@ -19,8 +19,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +36,7 @@ import (
 
 	"github.com/go-logr/zapr"
 	"go.uber.org/zap"
+	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -44,9 +45,11 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller"
@@ -65,20 +68,161 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// postgresqlValidator validates PostgreSQL resources
+type postgresqlValidator struct {
+	Client  client.Client
+	decoder admission.Decoder
+	log     *zap.SugaredLogger
+}
+
+// Handle handles the admission request for PostgreSQL resources
+func (v *postgresqlValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+	var postgresql instancev1alpha1.Postgresql
+
+	if err := v.decoder.Decode(req, &postgresql); err != nil {
+		v.log.Errorw("Failed to decode PostgreSQL object", "error", err)
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
+	// Check if postgresqlID is specified
+	if postgresql.Spec.ExternalInstance == nil || postgresql.Spec.ExternalInstance.PostgresqlID == "" {
+		// No postgresqlID specified, allow the request
+		return admission.Allowed("No postgresqlID specified")
+	}
+
+	postgresqlID := postgresql.Spec.ExternalInstance.PostgresqlID
+
+	v.log.Infow("Validating PostgreSQL resource", "name", postgresql.Name, "namespace", postgresql.Namespace, "postgresqlID", postgresqlID)
+
+	// List all PostgreSQL resources across all namespaces in the cluster
+	postgresqlList := &instancev1alpha1.PostgresqlList{}
+	if err := v.Client.List(ctx, postgresqlList); err != nil {
+		v.log.Errorw("Failed to list PostgreSQL resources", "error", err)
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+
+	// Check for duplicate postgresqlID across the entire cluster
+	for _, existingPostgresql := range postgresqlList.Items {
+		// Skip the current resource if this is an update
+		if req.Operation == admissionv1.Update &&
+			existingPostgresql.Name == postgresql.Name &&
+			existingPostgresql.Namespace == postgresql.Namespace {
+			continue
+		}
+
+		if existingPostgresql.Spec.ExternalInstance != nil &&
+			existingPostgresql.Spec.ExternalInstance.PostgresqlID == postgresqlID {
+			msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s already exists in namespace %s (instance: %s)",
+				postgresqlID, existingPostgresql.Namespace, existingPostgresql.Name)
+			v.log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID,
+				"existing-namespace", existingPostgresql.Namespace, "existing-name", existingPostgresql.Name)
+			return admission.Denied(msg)
+		}
+	}
+
+	v.log.Infow("Validation passed", "name", postgresql.Name, "namespace", postgresql.Namespace, "postgresqlID", postgresqlID)
+	return admission.Allowed("No duplicate postgresqlID found in cluster")
+}
+
+// userValidator validates User resources
+type userValidator struct {
+	Client          client.Client
+	decoder         admission.Decoder
+	log             *zap.SugaredLogger
+	excludeUserList []string
+}
+
+// Handle handles the admission request for User resources
+func (v *userValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+	var user instancev1alpha1.User
+
+	if err := v.decoder.Decode(req, &user); err != nil {
+		v.log.Errorw("Failed to decode User object", "error", err)
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
+	// Check if postgresqlID and username are specified
+	if user.Spec.PostgresqlID == "" {
+		return admission.Allowed("No postgresqlID specified")
+	}
+	if user.Spec.Username == "" {
+		return admission.Allowed("No username specified")
+	}
+
+	postgresqlID := user.Spec.PostgresqlID
+	username := user.Spec.Username
+
+	v.log.Infow("Validating User resource", "name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
+
+	// Check if username is in the Excludelist
+	for _, excludelistedUser := range v.excludeUserList {
+		if excludelistedUser == username {
+			msg := fmt.Sprintf("Username %s is in the excludelist and cannot be created", username)
+			v.log.Infow("Validation denied", "reason", msg, "username", username)
+			return admission.Denied(msg)
+		}
+	}
+
+	// First, verify that the postgresqlID exists in a PostgreSQL CRD object
+	postgresqlList := &instancev1alpha1.PostgresqlList{}
+	if err := v.Client.List(ctx, postgresqlList); err != nil {
+		v.log.Errorw("Failed to list PostgreSQL resources", "error", err)
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+
+	postgresqlExists := false
+	for _, postgresql := range postgresqlList.Items {
+		if postgresql.Spec.ExternalInstance != nil &&
+			postgresql.Spec.ExternalInstance.PostgresqlID == postgresqlID {
+			postgresqlExists = true
+			break
+		}
+	}
+
+	if !postgresqlExists {
+		msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s does not exist in the cluster", postgresqlID)
+		v.log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID)
+		return admission.Denied(msg)
+	}
+
+	// List all User resources across all namespaces in the cluster
+	userList := &instancev1alpha1.UserList{}
+	if err := v.Client.List(ctx, userList); err != nil {
+		v.log.Errorw("Failed to list User resources", "error", err)
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+
+	// Check for duplicate postgresqlID + username combination across the entire cluster
+	for _, existingUser := range userList.Items {
+		// Skip the current resource if this is an update
+		if req.Operation == admissionv1.Update &&
+			existingUser.Name == user.Name &&
+			existingUser.Namespace == user.Namespace {
+			continue
+		}
+
+		if existingUser.Spec.PostgresqlID == postgresqlID &&
+			existingUser.Spec.Username == username {
+			msg := fmt.Sprintf("User with postgresqlID %s and username %s already exists in namespace %s (instance: %s)",
+				postgresqlID, username, existingUser.Namespace, existingUser.Name)
+			v.log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "username", username,
+				"existing-namespace", existingUser.Namespace, "existing-name", existingUser.Name)
+			return admission.Denied(msg)
+		}
+	}
+
+	v.log.Infow("Validation passed", "name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
+	return admission.Allowed("No duplicate postgresqlID and username combination found in cluster")
+}
+
 // getCurrentNamespace discovers the current namespace from the service account
 // Returns the namespace or a default value if not found
-func getCurrentNamespace() string {
+func getCurrentNamespace(namespaceFile string) string {
 	// Try to read from the service account namespace file (standard in Kubernetes pods)
-	namespaceFile := "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 	if data, err := os.ReadFile(namespaceFile); err == nil {
 		if ns := strings.TrimSpace(string(data)); ns != "" {
 			return ns
 		}
-	}
-
-	// Fallback to environment variable
-	if ns := os.Getenv("NAMESPACE"); ns != "" {
-		return ns
 	}
 
 	// Default fallback
@@ -86,7 +230,7 @@ func getCurrentNamespace() string {
 }
 
 // updateWebhookConfigurationWithCABundle updates the ValidatingWebhookConfiguration with the CA bundle from the secret
-func updateWebhookConfigurationWithCABundle(secretName, namespace string, config *rest.Config, lg *zap.SugaredLogger) error {
+func updateWebhookConfigurationWithCABundle(secretName, namespace string, config *rest.Config, webHookName string, lg *zap.SugaredLogger) error {
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
@@ -100,24 +244,16 @@ func updateWebhookConfigurationWithCABundle(secretName, namespace string, config
 		return fmt.Errorf("failed to get secret: %w", err)
 	}
 
-	certData, ok := secret.Data["tls.crt"]
+	caBundle, ok := secret.Data["tls.crt"]
 	if !ok {
 		return fmt.Errorf("tls.crt not found in secret %s", secretName)
 	}
 
-	// Encode certificate as base64 for CA bundle
-	caBundle := base64.StdEncoding.EncodeToString(certData)
-
 	// Get the ValidatingWebhookConfiguration
-	webhookConfigName := "k8s-postgresql-operator-validating-webhook-configuration"
+	webhookConfigName := webHookName
 	webhookConfig, err := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(ctx, webhookConfigName, metav1.GetOptions{})
 	if err != nil {
-		// Try alternative name
-		webhookConfigName = "validating-webhook-configuration"
-		webhookConfig, err = clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(ctx, webhookConfigName, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to get ValidatingWebhookConfiguration: %w", err)
-		}
+		return fmt.Errorf("failed to get ValidatingWebhookConfiguration: %w", err)
 	}
 
 	// Update the CA bundle in the webhook configuration
@@ -172,9 +308,7 @@ func main() {
 		c.NextProtos = []string{"http/1.1"}
 	}
 
-	if !cfg.EnableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
-	}
+	tlsOpts = append(tlsOpts, disableHTTP2)
 
 	// Create watcher for webhook certificates
 	var webhookCertWatcher *certwatcher.CertWatcher
@@ -200,26 +334,30 @@ func main() {
 		lg.Infow("Generating self-signed webhook certificates and storing in Secret", "cert-dir", tempCertDir)
 
 		// Get service name from environment or use default
-		serviceName := os.Getenv("SERVICE_NAME")
-		if serviceName == "" {
-			serviceName = "k8s-postgresql-operator"
-		}
-		// Discover current namespace
-		namespace := getCurrentNamespace()
 
-		secretName := fmt.Sprintf("%s-webhook-cert", serviceName)
+		// Discover current namespace
+		namespace := getCurrentNamespace(cfg.K8sNamespacePath)
+
+		secretName := fmt.Sprintf("%s-webhook-cert", cfg.WebhookK8sServiceName)
 
 		// Get Kubernetes config
 		k8sConfig := ctrl.GetConfigOrDie()
-		_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, tempCertDir, k8sConfig)
+		_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, k8sConfig)
 		if err != nil {
 			lg.Error(err, "Failed to generate self-signed webhook certificates")
 			os.Exit(1)
 		}
 		lg.Infow("Webhook certificates generated and stored in Secret", "secret-name", secretName, "cert-path", webhookCertPath, "key-path", webhookKeyPath)
 
-		// Update ValidatingWebhookConfiguration with CA bundle from secret
-		if err := updateWebhookConfigurationWithCABundle(secretName, namespace, k8sConfig, lg); err != nil {
+		// Update ValidatingWebhookPostgresql  with CA bundle from secret
+		if err := updateWebhookConfigurationWithCABundle(secretName, namespace, k8sConfig, cfg.K8sWebhookNamePostgresql, lg); err != nil {
+			lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName)
+			// Don't exit, as the webhook might still work if the CA bundle is set manually
+		} else {
+			lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName)
+		}
+		// Update ValidatingWebhookUser with CA bundle from secret
+		if err := updateWebhookConfigurationWithCABundle(secretName, namespace, k8sConfig, cfg.K8sWebhookNameUser, lg); err != nil {
 			lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName)
 			// Don't exit, as the webhook might still work if the CA bundle is set manually
 		} else {
@@ -240,11 +378,11 @@ func main() {
 	})
 
 	webhookServer := webhook.NewServer(webhook.Options{
-		Host:    "0.0.0.0",
-		Port:    8443,
+		Host:    cfg.WebhookServerAddr,
+		Port:    cfg.WebhookServerPort,
 		TLSOpts: webhookTLSOpts,
 	})
-	lg.Infow("Webhook server configured", "host", "0.0.0.0", "port", 8443, "cert-path", webhookCertPath, "key-path", webhookKeyPath)
+	lg.Infow("Webhook server configured", "host", cfg.WebhookServerAddr, "port", cfg.WebhookServerPort, "cert-path", webhookCertPath, "key-path", webhookKeyPath)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -273,7 +411,7 @@ func main() {
 	// Initialize Vault client if environment variables are set
 	var vaultClient *vault.Client
 	if cfg.VaultAddr != "" {
-		vc, err := vault.NewClient(cfg.VaultAddr, cfg.VaultRole, cfg.VaultK8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath)
+		vc, err := vault.NewClient(cfg.VaultAddr, cfg.VaultRole, cfg.K8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath)
 		if err != nil {
 			lg.Error(err, "unable to create Vault client")
 			os.Exit(1)
@@ -315,11 +453,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register webhook
-	if err := (&instancev1alpha1.Postgresql{}).SetupWebhookWithManager(mgr); err != nil {
-		lg.Error(err, "unable to create webhook", "webhook", "Postgresql")
-		os.Exit(1)
-	}
 	// +kubebuilder:scaffold:builder
 
 	if webhookCertWatcher != nil {
@@ -338,10 +471,43 @@ func main() {
 		lg.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
+	// Register /postgresql_validate webhook handler
+	postgresqlValidateHandler := &postgresqlValidator{
+		Client:  mgr.GetClient(),
+		decoder: admission.NewDecoder(scheme),
+		log:     lg,
+	}
+	webhookServer.Register("/postgresqlvalidate", &webhook.Admission{Handler: postgresqlValidateHandler})
+	lg.Infow("Registered /postgresqlvalidate webhook handler")
 
-	lg.Infow("starting postgresql operator", "webhook-port", 8443)
+	// Register /user_validate webhook handler
+	// Parse exclude user list from comma-separated string
+	excludeUserList := []string{}
+	if cfg.ExcludeUserList != "" {
+		excludeUserList = strings.Split(cfg.ExcludeUserList, ",")
+		// Trim whitespace from each username
+		for i, user := range excludeUserList {
+			excludeUserList[i] = strings.TrimSpace(user)
+		}
+		lg.Infow("Exclude user list configured", "users", excludeUserList)
+	}
+	userValidateHandler := &userValidator{
+		Client:          mgr.GetClient(),
+		decoder:         admission.NewDecoder(scheme),
+		log:             lg,
+		excludeUserList: excludeUserList,
+	}
+	webhookServer.Register("/uservalidate", &webhook.Admission{Handler: userValidateHandler})
+	lg.Infow("Registered /uservalidate webhook handler")
+
+	if err := mgr.Add(webhookServer); err != nil {
+		lg.Error(err, "unable to set up webhook server")
+		os.Exit(1)
+	}
+
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		lg.Error(err, "problem starting postgresql operator")
 		os.Exit(1)
 	}
+
 }
