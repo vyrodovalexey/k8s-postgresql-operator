@@ -44,10 +44,10 @@ type DatabaseReconciler struct {
 	Log         *zap.SugaredLogger
 }
 
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=databases,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=databases/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=databases/finalizers,verbs=update
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases/finalizers,verbs=update
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -88,7 +88,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", database.Spec.PostgresqlID)
+		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration ", "postgresqlID: ", database.Spec.PostgresqlID)
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, database); err != nil {

@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: postgresqls.instance.alexvyrodov.example
+  name: users.postgresql-operator.vyrodovalexey.github.com
 spec:
-  group: instance.alexvyrodov.example
+  group: postgresql-operator.vyrodovalexey.github.com
   names:
-    kind: Postgresql
-    listKind: PostgresqlList
-    plural: postgresqls
-    singular: postgresql
+    kind: User
+    listKind: UserList
+    plural: users
+    singular: user
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Postgresql is the Schema for the postgresqls API.
+        description: User is the Schema for the users API
         properties:
           apiVersion:
             description: |-
@@ -37,41 +37,25 @@ spec:
           metadata:
             type: object
           spec:
-            description: PostgresqlSpec defines the desired state of Postgresql.
+            description: UserSpec defines the desired state of User
             properties:
-              externalInstance:
-                description: |-
-                  ExternalInstance defines connection details for an external PostgreSQL instance
-                  If specified, the operator will manage this external instance instead of creating a new one
-                properties:
-                  address:
-                    type: string
-                  port:
-                    default: 5432
-                    description: |-
-                      Port is the port number on which PostgreSQL is listening
-                      Defaults to 5432 if not specified
-                    format: int32
-                    type: integer
-                  postgresqlID:
-                    type: string
-                  sslMode:
-                    default: require
-                    description: |-
-                      SSLMode specifies the SSL connection mode
-                      Valid values: disable, require, verify-ca, verify-full
-                    type: string
-                required:
-                - address
-                - postgresqlID
-                type: object
+              postgresqlID:
+                description: PostgresqlID is the ID of the PostgreSQL instance where
+                  this user should be created
+                type: string
+              username:
+                description: Username is the PostgreSQL username to create
+                type: string
+            required:
+            - postgresqlID
+            - username
             type: object
           status:
-            description: PostgresqlStatus defines the observed state of Postgresql.
+            description: UserStatus defines the observed state of User
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the PostgreSQL instance state
+                  of the User state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -127,17 +111,12 @@ spec:
                   - type
                   type: object
                 type: array
-              connected:
-                description: Connected indicates whether the operator has successfully
-                  connected to the PostgreSQL instance
+              created:
+                description: Created indicates whether the user has been successfully
+                  created in PostgreSQL
                 type: boolean
-              connectionAddress:
-                description: ConnectionAddress is the actual address being used to
-                  connect
-                type: string
-              lastConnectionAttempt:
-                description: LastConnectionAttempt is the timestamp of the last connection
-                  attempt
+              lastSyncAttempt:
+                description: LastSyncAttempt is the timestamp of the last sync attempt
                 format: date-time
                 type: string
             type: object

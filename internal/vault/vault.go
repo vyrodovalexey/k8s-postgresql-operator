@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
-	"go.uber.org/zap"
 )
 
 // Client wraps the Vault API client
@@ -29,26 +28,23 @@ type Client struct {
 	client          *api.Client
 	vaultMountPoint string
 	vaultSecretPath string
-	lg              *zap.SugaredLogger
 }
 
 // NewClient creates a new Vault client using Kubernetes authentication
 // VAULT_ADDR: Vault server address (required)
 // VAULT_ROLE: Vault role for Kubernetes authentication (required)
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
-func NewClient(log *zap.SugaredLogger, vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
+func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
 
 	if vaultRole == "" {
-		log.Errorw("VAULT_ROLE environment variable is not set (required for Kubernetes auth)")
 		return nil, fmt.Errorf("VAULT_ROLE environment variable is not set (required for Kubernetes auth)")
 	}
-	log.Infow("Vault ENV", "VAULT_ADDR", vaultAddr, "VAULT_ROLE", vaultRole, "VAULT_K8S_TOKEN_PATH", tokenPath)
+
 	config := api.DefaultConfig()
 	config.Address = vaultAddr
 
 	client, err := api.NewClient(config)
 	if err != nil {
-		log.Errorw("failed to create Vault client:", "error", err)
 		return nil, fmt.Errorf("failed to create Vault client: %w", err)
 	}
 
@@ -63,25 +59,20 @@ func NewClient(log *zap.SugaredLogger, vaultAddr, vaultRole, tokenPath, vaultMou
 		auth.WithServiceAccountTokenPath(tokenPath),
 	)
 	if err != nil {
-		log.Errorw("failed to create Kubernetes auth method:", "error", err)
 		return nil, fmt.Errorf("failed to create Kubernetes auth method: %w", err)
 	}
 
 	// Authenticate with Vault using Kubernetes auth
 	authInfo, err := client.Auth().Login(context.Background(), k8sAuth)
 	if err != nil {
-		log.Errorw("failed to authenticate with Vault using Kubernetes auth", "error", err)
 		return nil, fmt.Errorf("failed to authenticate with Vault using Kubernetes auth: %w", err)
 	}
 
 	if authInfo == nil {
-		log.Errorw("authentication returned empty auth info", "error", err)
 		return nil, fmt.Errorf("authentication returned empty auth info")
 	}
 
-	log.Infow("Successfully authenticated with Vault using Kubernetes auth", "role", vaultRole)
-
-	return &Client{client: client, vaultMountPoint: vaultMountPoint, vaultSecretPath: vaultSecretPath, lg: log}, nil
+	return &Client{client: client, vaultMountPoint: vaultMountPoint, vaultSecretPath: vaultSecretPath}, nil
 }
 
 // GetPostgresqlCredentials retrieves PostgreSQL credentials from Vault KV store
@@ -91,12 +82,10 @@ func (c *Client) GetPostgresqlCredentials(ctx context.Context, postgresqlID stri
 	// Use KVv2 to read the secret
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
-		c.lg.Errorw("failed to read secret from Vault ", "error:", err)
 		return "", "", fmt.Errorf("failed to read secret from Vault: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		c.lg.Errorw("secret not found at path ", "error:", err)
 		return "", "", fmt.Errorf("secret not found at path: %s", kv2Path)
 	}
 
@@ -108,7 +97,6 @@ func (c *Client) GetPostgresqlCredentials(ctx context.Context, postgresqlID stri
 	}
 
 	if username == "" || password == "" {
-		c.lg.Errorw("credentials not found in secret at path ", "error:", err)
 		return "", "", fmt.Errorf("credentials not found in secret at path: %s", kv2Path)
 	}
 
@@ -122,12 +110,10 @@ func (c *Client) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID,
 	// Use KVv2 to read the secret
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
-		c.lg.Errorw("failed to read secret from Vault ", "error:", err)
 		return "", fmt.Errorf("failed to read secret from Vault: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		c.lg.Errorw("secret not found at path ", "error:", err)
 		return "", fmt.Errorf("secret not found at path: %s", kv2Path)
 	}
 
@@ -136,7 +122,6 @@ func (c *Client) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID,
 	}
 
 	if password == "" {
-		c.lg.Errorw("credentials not found in secret at path ", "error:", err)
 		return "", fmt.Errorf("credentials not found in secret at path: %s", kv2Path)
 	}
 
@@ -159,9 +144,7 @@ func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlI
 
 	if err != nil {
 		// If KV v2 fails, try KV v1
-		c.lg.Errorw("KV v2 write failed ", "error", err, "path:", kv2Path)
-	} else {
-		c.lg.Infow("Credentials stored in Vault KV v2 ", "path:", kv2Path)
+		return err
 	}
 
 	return nil

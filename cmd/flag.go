@@ -9,21 +9,13 @@ import (
 
 func ConfigParser(cfg *config.Config) {
 
-	flag.StringVar(&cfg.MetricsAddr, "metrics-bind-address", cfg.MetricsAddr, "The address of metrics endpoint binds to. "+
-		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&cfg.ProbeAddr, "health-probe-bind-address", cfg.ProbeAddr, "The address the probe endpoint binds to.")
 	flag.BoolVar(&cfg.EnableLeaderElection, "leader-elect", cfg.EnableLeaderElection,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&cfg.SecureMetrics, "metrics-secure", cfg.SecureMetrics,
-		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.StringVar(&cfg.WebhookCertPath, "webhook-cert-path", cfg.WebhookCertPath, "The directory that contains the webhook certificate.")
 	flag.StringVar(&cfg.WebhookCertName, "webhook-cert-name", cfg.WebhookCertName, "The name of the webhook certificate file.")
 	flag.StringVar(&cfg.WebhookCertKey, "webhook-cert-key", cfg.WebhookCertKey, "The name of the webhook key file.")
-	flag.StringVar(&cfg.MetricsCertPath, "metrics-cert-path", cfg.MetricsCertPath,
-		"The directory that contains the metrics server certificate.")
-	flag.StringVar(&cfg.MetricsCertName, "metrics-cert-name", cfg.MetricsCertName, "The name of the metrics server certificate file.")
-	flag.StringVar(&cfg.MetricsCertKey, "metrics-cert-key", cfg.MetricsCertKey, "The name of the metrics server key file.")
 	flag.BoolVar(&cfg.EnableHTTP2, "enable-http2", cfg.EnableHTTP2,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&cfg.VaultAddr, "vault-addr", cfg.VaultAddr, "Vault addr, example http://0.0.0.0:8200")

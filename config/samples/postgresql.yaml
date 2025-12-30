@@ -1,10 +1,10 @@
-apiVersion: instance.alexvyrodov.example/v1alpha1
+apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
 kind: Postgresql
 metadata:
   labels:
     app.kubernetes.io/name: k8s-postgresql-operator
     app.kubernetes.io/managed-by: kustomize
-  name: postgresql-sample-1
+  name: postgresql-sample
 spec:
   # External PostgreSQL instance configuration
   # This allows you to manage an existing PostgreSQL instance by specifying its address
@@ -15,8 +15,9 @@ spec:
     # - "postgres.example.com"
     # - "192.168.1.100"
     # - "postgres-service.namespace.svc.cluster.local"
-    address: "192.168.0.55"
-    
+    postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+    address: "192.168.0.36"
+
     # Port number (defaults to 5432 if not specified)
     port: 5432
     
@@ -25,8 +26,8 @@ spec:
     
     # Reference to a Kubernetes secret containing credentials
     # The secret should contain keys: username and password
-    username: postgres
-    password: password
+    #username: postgres
+    #password: password
     #credentialsSecretRef:
     #  name: postgresql-credentials
     #  namespace: default  # Optional: defaults to the same namespace as the Postgresql resource

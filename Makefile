@@ -28,8 +28,8 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 # This variable is used to construct full image tags for bundle and catalog images.
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# alexvyrodov.example/k8s-postgresql-operator-bundle:$VERSION and alexvyrodov.example/k8s-postgresql-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= alexvyrodov.example/k8s-postgresql-operator
+# vyrodovalexey.example/k8s-postgresql-operator-bundle:$VERSION and vyrodovalexey.example/k8s-postgresql-operator-catalog:$VERSION.
+IMAGE_TAG_BASE ?= vyrodovalexey.example/k8s-postgresql-operator
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -94,7 +94,7 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=role crd paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: databases.instance.alexvyrodov.example
+  name: databases.postgresql-operator.vyrodovalexey.github.com
 spec:
-  group: instance.alexvyrodov.example
+  group: postgresql-operator.vyrodovalexey.github.com
   names:
     kind: Database
     listKind: DatabaseList

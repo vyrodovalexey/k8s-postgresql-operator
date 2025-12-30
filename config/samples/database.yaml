@@ -1,4 +1,4 @@
-apiVersion: instance.alexvyrodov.example/v1alpha1
+apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
 kind: Database
 metadata:
   labels:

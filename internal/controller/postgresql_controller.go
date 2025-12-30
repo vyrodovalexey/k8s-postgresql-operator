@@ -44,20 +44,14 @@ type PostgresqlReconciler struct {
 	Log         *zap.SugaredLogger
 }
 
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls/finalizers,verbs=update
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;patch;update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Postgresql object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 
 	// Fetch the Postgresql instance
@@ -116,7 +110,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	if r.VaultClient != nil {
 		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
 		if err != nil {
-			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Error(err, "Failed to get credentials from Vault, ", "postgresqlID: ", externalInstance.PostgresqlID)
 		} else {
 			//if username == "" {
 			username = vaultUsername
@@ -124,7 +118,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 			//if password == "" {
 			password = vaultPassword
 			//}
-			r.Log.Info("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Info("Credentials retrieved from Vault, ", "postgresqlID: ", externalInstance.PostgresqlID)
 		}
 	}
 
@@ -140,7 +134,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	// Test PostgreSQL connection
 	connected, err := r.testPostgreSQLConnection(ctx, externalInstance.Address, port, database, username, password, sslMode)
 	if err != nil {
-		r.Log.Error(err, "Failed to test PostgreSQL connection", "address", connectionAddress)
+		r.Log.Error(err, "Failed to test PostgreSQL connection, ", "address: ", connectionAddress)
 	}
 
 	// Check if status needs to be updated
@@ -186,13 +180,13 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 		now := metav1.Now()
 		postgresql.Status.LastConnectionAttempt = &now
 
-		r.Log.Info("Testing PostgreSQL connection",
-			"uuid", externalInstance.PostgresqlID,
-			"address", externalInstance.Address,
-			"port", port,
-			"database", database,
-			"username", username,
-			"connected", connected)
+		r.Log.Info("Testing PostgreSQL connection: ",
+			" uuid: ", externalInstance.PostgresqlID,
+			" address: ", externalInstance.Address,
+			" port: ", port,
+			" database: ", database,
+			" username: ", username,
+			" connected: ", connected)
 
 		// Update the status
 		if err := r.Status().Update(ctx, postgresql); err != nil {
@@ -201,9 +195,9 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 		}
 
 		if connected {
-			r.Log.Info("Successfully connected to PostgreSQL instance", "address", connectionAddress)
+			r.Log.Info("Successfully connected to PostgreSQL instance, ", "address: ", connectionAddress)
 		} else {
-			r.Log.Info("Failed to connect to PostgreSQL instance", "address", connectionAddress, "error", err)
+			r.Log.Info("Failed to connect to PostgreSQL instance, ", "address: ", connectionAddress, "error: ", err)
 		}
 	}
 

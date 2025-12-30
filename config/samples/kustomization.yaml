@@ -1,6 +1,6 @@
 ## Append samples of your project ##
 resources:
-- instance_v1alpha1_postgresql.yaml
-- instance_v1alpha1_user.yaml
-- instance_v1alpha1_database.yaml
+- postgresql.yaml
+- user.yaml
+- database.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

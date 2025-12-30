@@ -46,10 +46,10 @@ type UserReconciler struct {
 	Log         *zap.SugaredLogger
 }
 
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=users,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=users/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=users/finalizers,verbs=update
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users/finalizers,verbs=update
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -119,7 +119,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		} else {
 			postgresUsername = vaultUsername
 			postgresPassword = vaultPassword
-			r.Log.Info("Credentials retrieved from Vault by user controller", "postgresqlID", user.Spec.PostgresqlID)
+			r.Log.Info("Credentials retrieved from Vault by user controller, ", "postgresqlID: ", user.Spec.PostgresqlID)
 		}
 	} else {
 		r.Log.Info("Vault client not available")
@@ -129,28 +129,28 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if r.VaultClient != nil {
 		vaultUserPassword, err := r.VaultClient.GetPostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username)
 		if err != nil || vaultUserPassword == "" {
-			r.Log.Info("User credentials not found in Vault, generating new password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username, "error", err)
+			r.Log.Info("User credentials not found in Vault, generating new password ", "postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username, " error: ", err)
 			// Generate random password
 
 			// If no password in spec, generate a secure random one
 			generatedPassword, err := generateRandomPassword(32)
 			if err != nil {
-				r.Log.Error(err, "Failed to generate random password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Error(err, "Failed to generate random password", " postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
 				return ctrl.Result{}, fmt.Errorf("failed to generate random password: %w", err)
 			}
 			dbPassword = generatedPassword
-			r.Log.Info("Generated random password for user", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			r.Log.Info("Generated random password for user, ", "postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
 
 			err = r.VaultClient.StorePostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username, dbPassword)
 			if err != nil {
-				r.Log.Error(err, "Failed to store user credentials in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Error(err, "Failed to store user credentials in Vault, ", " postgresqlID: ", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
 				// Continue with reconciliation even if Vault storage fails
 			} else {
-				r.Log.Info("User credentials stored in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Info("User credentials stored in Vault ", "postgresqlID: ", user.Spec.PostgresqlID, "user: ", user.Spec.Username)
 			}
 		} else {
 			dbPassword = vaultUserPassword
-			r.Log.Info("User credentials retrieved from Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			r.Log.Info("User credentials retrieved from Vault ", "postgresqlID:", user.Spec.PostgresqlID, " user: ", user.Spec.Username)
 		}
 	} else {
 		// Use password from spec if Vault is not available
@@ -161,7 +161,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	err = r.createOrUpdateUser(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
 		user.Spec.Username, dbPassword)
 	if err != nil {
-		r.Log.Error(err, "Failed to create/update user in PostgreSQL", "username", user.Spec.Username)
+		r.Log.Error(err, "Failed to create/update user in PostgreSQL, ", "username: ", user.Spec.Username)
 		user.Status.Created = false
 		updateUserCondition(user, "Ready", metav1.ConditionFalse, "CreateFailed",
 			fmt.Sprintf("Failed to create user: %v", err))
@@ -180,7 +180,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Info("Successfully reconciled User", "username", user.Spec.Username)
+	r.Log.Info("Successfully reconciled User with ", "username: ", user.Spec.Username)
 	return ctrl.Result{}, nil
 }
 

@@ -1,0 +1,26 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: k8s-postgresql-operator-controller-service
+      namespace: k8s-postgresql-operator
+      path: /validate
+  failurePolicy: Fail
+  name: postgresql-operator.vyrodovalexey.github.com
+  rules:
+  - apiGroups:
+    - postgresql-operator.vyrodovalexey.github.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - postgresqls
+  sideEffects: None
