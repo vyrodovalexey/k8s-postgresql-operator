@@ -5,6 +5,9 @@ resources:
 - bases/postgresql-operator.vyrodovalexey.github.com_postgresqls.yaml
 - bases/postgresql-operator.vyrodovalexey.github.com_databases.yaml
 - bases/postgresql-operator.vyrodovalexey.github.com_users.yaml
+- bases/postgresql-operator.vyrodovalexey.github.com_schemas.yaml
+- bases/postgresql-operator.vyrodovalexey.github.com_rolegroups.yaml
+- bases/postgresql-operator.vyrodovalexey.github.com_grants.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

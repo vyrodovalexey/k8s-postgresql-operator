@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: databases.postgresql-operator.vyrodovalexey.github.com
+  name: rolegroups.postgresql-operator.vyrodovalexey.github.com
 spec:
   group: postgresql-operator.vyrodovalexey.github.com
   names:
-    kind: Database
-    listKind: DatabaseList
-    plural: databases
-    singular: database
+    kind: RoleGroup
+    listKind: RoleGroupList
+    plural: rolegroups
+    singular: rolegroup
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Database is the Schema for the databases API
+        description: RoleGroup is the Schema for the rolegroups API
         properties:
           apiVersion:
             description: |-
@@ -37,34 +37,33 @@ spec:
           metadata:
             type: object
           spec:
-            description: DatabaseSpec defines the desired state of Database
+            description: RoleGroupSpec defines the desired state of RoleGroup
             properties:
-              database:
-                description: Database is the name of the PostgreSQL database to create
+              groupRole:
+                description: GroupRole is the name of the PostgreSQL role that will
+                  be the group
                 type: string
-              owner:
-                description: Owner is the PostgreSQL user that will own the database
-                type: string
+              memberRoles:
+                description: MemberRoles is the list of PostgreSQL role names that
+                  will be members of the group role
+                items:
+                  type: string
+                type: array
               postgresqlID:
                 description: PostgresqlID is the ID of the PostgreSQL instance where
-                  this database should be created
-                type: string
-              schema:
-                description: |-
-                  Schema is the name of the PostgreSQL schema to create in the database
-                  If not specified, defaults to "public"
+                  this role group should be created
                 type: string
             required:
-            - database
-            - owner
+            - groupRole
+            - memberRoles
             - postgresqlID
             type: object
           status:
-            description: DatabaseStatus defines the observed state of Database
+            description: RoleGroupStatus defines the observed state of RoleGroup
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the Database state
+                  of the RoleGroup state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -121,7 +120,7 @@ spec:
                   type: object
                 type: array
               created:
-                description: Created indicates whether the database has been successfully
+                description: Created indicates whether the role group has been successfully
                   created in PostgreSQL
                 type: boolean
               lastSyncAttempt:

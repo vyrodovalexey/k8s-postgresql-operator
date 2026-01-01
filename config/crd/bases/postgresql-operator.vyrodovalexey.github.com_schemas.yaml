@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: databases.postgresql-operator.vyrodovalexey.github.com
+  name: schemas.postgresql-operator.vyrodovalexey.github.com
 spec:
   group: postgresql-operator.vyrodovalexey.github.com
   names:
-    kind: Database
-    listKind: DatabaseList
-    plural: databases
-    singular: database
+    kind: Schema
+    listKind: SchemaList
+    plural: schemas
+    singular: schema
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Database is the Schema for the databases API
+        description: Schema is the Schema for the schemas API
         properties:
           apiVersion:
             description: |-
@@ -37,34 +37,29 @@ spec:
           metadata:
             type: object
           spec:
-            description: DatabaseSpec defines the desired state of Database
+            description: SchemaSpec defines the desired state of Schema
             properties:
-              database:
-                description: Database is the name of the PostgreSQL database to create
-                type: string
               owner:
-                description: Owner is the PostgreSQL user that will own the database
+                description: Owner is the PostgreSQL user that will own the schema
                 type: string
               postgresqlID:
                 description: PostgresqlID is the ID of the PostgreSQL instance where
-                  this database should be created
+                  this schema should be created
                 type: string
               schema:
-                description: |-
-                  Schema is the name of the PostgreSQL schema to create in the database
-                  If not specified, defaults to "public"
+                description: Schema is the name of the PostgreSQL schema to create
                 type: string
             required:
-            - database
             - owner
             - postgresqlID
+            - schema
             type: object
           status:
-            description: DatabaseStatus defines the observed state of Database
+            description: SchemaStatus defines the observed state of Schema
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the Database state
+                  of the Schema state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -121,7 +116,7 @@ spec:
                   type: object
                 type: array
               created:
-                description: Created indicates whether the database has been successfully
+                description: Created indicates whether the schema has been successfully
                   created in PostgreSQL
                 type: boolean
               lastSyncAttempt:

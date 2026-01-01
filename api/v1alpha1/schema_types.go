@@ -20,29 +20,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// DatabaseSpec defines the desired state of Database
-type DatabaseSpec struct {
-	// Database is the name of the PostgreSQL database to create
+// SchemaSpec defines the desired state of Schema
+type SchemaSpec struct {
+	// Schema is the name of the PostgreSQL schema to create
 	// +required
-	Database string `json:"database"`
+	Schema string `json:"schema"`
 
-	// Owner is the PostgreSQL user that will own the database
+	// Owner is the PostgreSQL user that will own the schema
 	// +required
 	Owner string `json:"owner"`
 
-	// Schema is the name of the PostgreSQL schema to create in the database
-	// If not specified, defaults to "public"
-	// +optional
-	Schema string `json:"schema,omitempty"`
-
-	// PostgresqlID is the ID of the PostgreSQL instance where this database should be created
+	// PostgresqlID is the ID of the PostgreSQL instance where this schema should be created
 	// +required
 	PostgresqlID string `json:"postgresqlID"`
 }
 
-// DatabaseStatus defines the observed state of Database
-type DatabaseStatus struct {
-	// Created indicates whether the database has been successfully created in PostgreSQL
+// SchemaStatus defines the observed state of Schema
+type SchemaStatus struct {
+	// Created indicates whether the schema has been successfully created in PostgreSQL
 	// +optional
 	Created bool `json:"created,omitempty"`
 
@@ -50,7 +45,7 @@ type DatabaseStatus struct {
 	// +optional
 	LastSyncAttempt *metav1.Time `json:"lastSyncAttempt,omitempty"`
 
-	// Conditions represent the latest available observations of the Database state
+	// Conditions represent the latest available observations of the Schema state
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
@@ -58,24 +53,24 @@ type DatabaseStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// Database is the Schema for the databases API
-type Database struct {
+// Schema is the Schema for the schemas API
+type Schema struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   DatabaseSpec   `json:"spec,omitempty"`
-	Status DatabaseStatus `json:"status,omitempty"`
+	Spec   SchemaSpec   `json:"spec,omitempty"`
+	Status SchemaStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// DatabaseList contains a list of Database
-type DatabaseList struct {
+// SchemaList contains a list of Schema
+type SchemaList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Database `json:"items"`
+	Items           []Schema `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Database{}, &DatabaseList{})
+	SchemeBuilder.Register(&Schema{}, &SchemaList{})
 }

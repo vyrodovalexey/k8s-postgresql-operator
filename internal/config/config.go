@@ -9,6 +9,10 @@ const (
 	defaultWebhookK8sServiceName    = "k8s-postgresql-operator-controller-service"
 	defaultK8sWebhookNamePostgresql = "k8s-postgresql-operator-validating-webhook-postgresql"
 	defaultK8sWebhookNameUser       = "k8s-postgresql-operator-validating-webhook-user"
+	defaultK8sWebhookNameDatabase   = "k8s-postgresql-operator-validating-webhook-database"
+	defaultK8sWebhookNameGrant      = "k8s-postgresql-operator-validating-webhook-grant"
+	defaultK8sWebhookNameRoleGroup  = "k8s-postgresql-operator-validating-webhook-rolegroup"
+	defaultK8sWebhookNameSchema     = "k8s-postgresql-operator-validating-webhook-schema"
 	defaultEnableLeaderElection     = false
 	defaultProbeAddr                = ":8081"
 	defaultVaultAddr                = "http://0.0.0.0:8200"
@@ -30,6 +34,10 @@ type Config struct {
 	WebhookK8sServiceName    string `env:"WEBHOOK_K8S_SERVICE_NAME"`
 	K8sWebhookNamePostgresql string `env:"K8S_WEBHOOK_NAME_POSTGRESQL"`
 	K8sWebhookNameUser       string `env:"K8S_WEBHOOK_NAME_USER"`
+	K8sWebhookNameDatabase   string `env:"K8S_WEBHOOK_NAME_DATABASE"`
+	K8sWebhookNameGrant      string `env:"K8S_WEBHOOK_NAME_GRANT"`
+	K8sWebhookNameRoleGroup  string `env:"K8S_WEBHOOK_NAME_ROLEGROUP"`
+	K8sWebhookNameSchema     string `env:"K8S_WEBHOOK_NAME_SCHEMA"`
 	EnableLeaderElection     bool   `env:"ENABLE_LEADER_ELECTION"`
 	ProbeAddr                string `env:"PROBE_ADDR"`
 	VaultAddr                string `env:"VAULT_ADDR"`
@@ -52,6 +60,10 @@ func New() *Config {
 		defaultWebhookK8sServiceName,
 		defaultK8sWebhookNamePostgresql,
 		defaultK8sWebhookNameUser,
+		defaultK8sWebhookNameDatabase,
+		defaultK8sWebhookNameGrant,
+		defaultK8sWebhookNameRoleGroup,
+		defaultK8sWebhookNameSchema,
 		defaultEnableLeaderElection,
 		defaultProbeAddr,
 		defaultVaultAddr,

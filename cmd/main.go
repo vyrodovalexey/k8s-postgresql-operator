@@ -20,10 +20,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
@@ -35,17 +35,12 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"github.com/go-logr/zapr"
-	"go.uber.org/zap"
-	admissionv1 "k8s.io/api/admission/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -53,7 +48,10 @@ import (
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
+	webhookpkg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -66,217 +64,6 @@ func init() {
 
 	utilruntime.Must(instancev1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
-}
-
-// postgresqlValidator validates PostgreSQL resources
-type postgresqlValidator struct {
-	Client  client.Client
-	decoder admission.Decoder
-	log     *zap.SugaredLogger
-}
-
-// Handle handles the admission request for PostgreSQL resources
-func (v *postgresqlValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
-	var postgresql instancev1alpha1.Postgresql
-
-	if err := v.decoder.Decode(req, &postgresql); err != nil {
-		v.log.Errorw("Failed to decode PostgreSQL object", "error", err)
-		return admission.Errored(http.StatusBadRequest, err)
-	}
-
-	// Check if postgresqlID is specified
-	if postgresql.Spec.ExternalInstance == nil || postgresql.Spec.ExternalInstance.PostgresqlID == "" {
-		// No postgresqlID specified, allow the request
-		return admission.Allowed("No postgresqlID specified")
-	}
-
-	postgresqlID := postgresql.Spec.ExternalInstance.PostgresqlID
-
-	v.log.Infow("Validating PostgreSQL resource", "name", postgresql.Name, "namespace", postgresql.Namespace, "postgresqlID", postgresqlID)
-
-	// List all PostgreSQL resources across all namespaces in the cluster
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := v.Client.List(ctx, postgresqlList); err != nil {
-		v.log.Errorw("Failed to list PostgreSQL resources", "error", err)
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	// Check for duplicate postgresqlID across the entire cluster
-	for _, existingPostgresql := range postgresqlList.Items {
-		// Skip the current resource if this is an update
-		if req.Operation == admissionv1.Update &&
-			existingPostgresql.Name == postgresql.Name &&
-			existingPostgresql.Namespace == postgresql.Namespace {
-			continue
-		}
-
-		if existingPostgresql.Spec.ExternalInstance != nil &&
-			existingPostgresql.Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s already exists in namespace %s (instance: %s)",
-				postgresqlID, existingPostgresql.Namespace, existingPostgresql.Name)
-			v.log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID,
-				"existing-namespace", existingPostgresql.Namespace, "existing-name", existingPostgresql.Name)
-			return admission.Denied(msg)
-		}
-	}
-
-	v.log.Infow("Validation passed", "name", postgresql.Name, "namespace", postgresql.Namespace, "postgresqlID", postgresqlID)
-	return admission.Allowed("No duplicate postgresqlID found in cluster")
-}
-
-// userValidator validates User resources
-type userValidator struct {
-	Client          client.Client
-	decoder         admission.Decoder
-	log             *zap.SugaredLogger
-	excludeUserList []string
-}
-
-// Handle handles the admission request for User resources
-func (v *userValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
-	var user instancev1alpha1.User
-
-	if err := v.decoder.Decode(req, &user); err != nil {
-		v.log.Errorw("Failed to decode User object", "error", err)
-		return admission.Errored(http.StatusBadRequest, err)
-	}
-
-	// Check if postgresqlID and username are specified
-	if user.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
-	}
-	if user.Spec.Username == "" {
-		return admission.Allowed("No username specified")
-	}
-
-	postgresqlID := user.Spec.PostgresqlID
-	username := user.Spec.Username
-
-	v.log.Infow("Validating User resource", "name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
-
-	// Check if username is in the Excludelist
-	for _, excludelistedUser := range v.excludeUserList {
-		if excludelistedUser == username {
-			msg := fmt.Sprintf("Username %s is in the excludelist and cannot be created", username)
-			v.log.Infow("Validation denied", "reason", msg, "username", username)
-			return admission.Denied(msg)
-		}
-	}
-
-	// First, verify that the postgresqlID exists in a PostgreSQL CRD object
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := v.Client.List(ctx, postgresqlList); err != nil {
-		v.log.Errorw("Failed to list PostgreSQL resources", "error", err)
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	postgresqlExists := false
-	for _, postgresql := range postgresqlList.Items {
-		if postgresql.Spec.ExternalInstance != nil &&
-			postgresql.Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			postgresqlExists = true
-			break
-		}
-	}
-
-	if !postgresqlExists {
-		msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s does not exist in the cluster", postgresqlID)
-		v.log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID)
-		return admission.Denied(msg)
-	}
-
-	// List all User resources across all namespaces in the cluster
-	userList := &instancev1alpha1.UserList{}
-	if err := v.Client.List(ctx, userList); err != nil {
-		v.log.Errorw("Failed to list User resources", "error", err)
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	// Check for duplicate postgresqlID + username combination across the entire cluster
-	for _, existingUser := range userList.Items {
-		// Skip the current resource if this is an update
-		if req.Operation == admissionv1.Update &&
-			existingUser.Name == user.Name &&
-			existingUser.Namespace == user.Namespace {
-			continue
-		}
-
-		if existingUser.Spec.PostgresqlID == postgresqlID &&
-			existingUser.Spec.Username == username {
-			msg := fmt.Sprintf("User with postgresqlID %s and username %s already exists in namespace %s (instance: %s)",
-				postgresqlID, username, existingUser.Namespace, existingUser.Name)
-			v.log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "username", username,
-				"existing-namespace", existingUser.Namespace, "existing-name", existingUser.Name)
-			return admission.Denied(msg)
-		}
-	}
-
-	v.log.Infow("Validation passed", "name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
-	return admission.Allowed("No duplicate postgresqlID and username combination found in cluster")
-}
-
-// getCurrentNamespace discovers the current namespace from the service account
-// Returns the namespace or a default value if not found
-func getCurrentNamespace(namespaceFile string) string {
-	// Try to read from the service account namespace file (standard in Kubernetes pods)
-	if data, err := os.ReadFile(namespaceFile); err == nil {
-		if ns := strings.TrimSpace(string(data)); ns != "" {
-			return ns
-		}
-	}
-
-	// Default fallback
-	return "k8s-postgresql-operator"
-}
-
-// updateWebhookConfigurationWithCABundle updates the ValidatingWebhookConfiguration with the CA bundle from the secret
-func updateWebhookConfigurationWithCABundle(secretName, namespace string, config *rest.Config, webHookName string, lg *zap.SugaredLogger) error {
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
-	ctx := context.Background()
-
-	// Get the secret containing the certificate
-	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get secret: %w", err)
-	}
-
-	caBundle, ok := secret.Data["tls.crt"]
-	if !ok {
-		return fmt.Errorf("tls.crt not found in secret %s", secretName)
-	}
-
-	// Get the ValidatingWebhookConfiguration
-	webhookConfigName := webHookName
-	webhookConfig, err := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(ctx, webhookConfigName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get ValidatingWebhookConfiguration: %w", err)
-	}
-
-	// Update the CA bundle in the webhook configuration
-	updated := false
-	for i := range webhookConfig.Webhooks {
-		if webhookConfig.Webhooks[i].Name == "postgresql-operator.vyrodovalexey.github.com" {
-			webhookConfig.Webhooks[i].ClientConfig.CABundle = []byte(caBundle)
-			updated = true
-			break
-		}
-	}
-
-	if !updated {
-		return fmt.Errorf("webhook 'postgresql-operator.vyrodovalexey.github.com' not found in ValidatingWebhookConfiguration")
-	}
-
-	// Update the ValidatingWebhookConfiguration
-	_, err = clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(ctx, webhookConfig, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update ValidatingWebhookConfiguration: %w", err)
-	}
-
-	return nil
 }
 
 // nolint:gocyclo
@@ -294,6 +81,10 @@ func main() {
 	// Convert SugaredLogger to Logger and wrap it for controller-runtime
 	zapLogger := lg.Desugar()
 	ctrl.SetLogger(zapr.NewLogger(zapLogger))
+
+	// Configure klog to use JSON format by redirecting to zap logger
+	// This ensures leader election logs are also in JSON format
+	klog.SetLogger(zapr.NewLogger(zapLogger))
 
 	lg.Infow("Server starting with: ")
 
@@ -336,7 +127,7 @@ func main() {
 		// Get service name from environment or use default
 
 		// Discover current namespace
-		namespace := getCurrentNamespace(cfg.K8sNamespacePath)
+		namespace := k8s.GetCurrentNamespace(cfg.K8sNamespacePath)
 
 		secretName := fmt.Sprintf("%s-webhook-cert", cfg.WebhookK8sServiceName)
 
@@ -349,19 +140,23 @@ func main() {
 		}
 		lg.Infow("Webhook certificates generated and stored in Secret", "secret-name", secretName, "cert-path", webhookCertPath, "key-path", webhookKeyPath)
 
-		// Update ValidatingWebhookPostgresql  with CA bundle from secret
-		if err := updateWebhookConfigurationWithCABundle(secretName, namespace, k8sConfig, cfg.K8sWebhookNamePostgresql, lg); err != nil {
-			lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName)
-			// Don't exit, as the webhook might still work if the CA bundle is set manually
-		} else {
-			lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName)
+		// Update all ValidatingWebhookConfigurations with CA bundle from secret
+		webhookNames := []string{
+			cfg.K8sWebhookNamePostgresql,
+			cfg.K8sWebhookNameUser,
+			cfg.K8sWebhookNameDatabase,
+			cfg.K8sWebhookNameGrant,
+			cfg.K8sWebhookNameRoleGroup,
+			cfg.K8sWebhookNameSchema,
 		}
-		// Update ValidatingWebhookUser with CA bundle from secret
-		if err := updateWebhookConfigurationWithCABundle(secretName, namespace, k8sConfig, cfg.K8sWebhookNameUser, lg); err != nil {
-			lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName)
-			// Don't exit, as the webhook might still work if the CA bundle is set manually
-		} else {
-			lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName)
+
+		for _, webhookName := range webhookNames {
+			if err := k8s.UpdateWebhookConfigurationWithCABundle(secretName, namespace, k8sConfig, webhookName, lg); err != nil {
+				lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName, "webhook-name", webhookName)
+				// Don't exit, as the webhook might still work if the CA bundle is set manually
+			} else {
+				lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName, "webhook-name", webhookName)
+			}
 		}
 	}
 
@@ -386,7 +181,7 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		Metrics:                metricsserver.Options{BindAddress: "0"}, // Disable metrics server
+		Metrics:                metricsserver.Options{BindAddress: ":8080"}, // Enable metrics server on port 8080
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: cfg.ProbeAddr,
 		LeaderElection:         cfg.EnableLeaderElection,
@@ -423,34 +218,86 @@ func main() {
 		lg.Infow("VAULT_ADDR not set, Vault integration disabled")
 	}
 
-	if err := (&controller.PostgresqlReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		VaultClient: vaultClient,
-		Log:         lg,
-	}).SetupWithManager(mgr); err != nil {
-		lg.Error(err, "unable to create controller Postgresql")
-		os.Exit(1)
+	// Setup all controllers
+	type controllerSetup struct {
+		name  string
+		setup func() error
 	}
 
-	if err := (&controller.UserReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		VaultClient: vaultClient,
-		Log:         lg,
-	}).SetupWithManager(mgr); err != nil {
-		lg.Error(err, "unable to create controller User")
-		os.Exit(1)
+	controllerSetups := []controllerSetup{
+		{
+			name: "Postgresql",
+			setup: func() error {
+				return (&controller.PostgresqlReconciler{
+					Client:      mgr.GetClient(),
+					Scheme:      mgr.GetScheme(),
+					VaultClient: vaultClient,
+					Log:         lg,
+				}).SetupWithManager(mgr)
+			},
+		},
+		{
+			name: "User",
+			setup: func() error {
+				return (&controller.UserReconciler{
+					Client:      mgr.GetClient(),
+					Scheme:      mgr.GetScheme(),
+					VaultClient: vaultClient,
+					Log:         lg,
+				}).SetupWithManager(mgr)
+			},
+		},
+		{
+			name: "Database",
+			setup: func() error {
+				return (&controller.DatabaseReconciler{
+					Client:      mgr.GetClient(),
+					Scheme:      mgr.GetScheme(),
+					VaultClient: vaultClient,
+					Log:         lg,
+				}).SetupWithManager(mgr)
+			},
+		},
+		{
+			name: "Grant",
+			setup: func() error {
+				return (&controller.GrantReconciler{
+					Client:      mgr.GetClient(),
+					Scheme:      mgr.GetScheme(),
+					VaultClient: vaultClient,
+					Log:         lg,
+				}).SetupWithManager(mgr)
+			},
+		},
+		{
+			name: "RoleGroup",
+			setup: func() error {
+				return (&controller.RoleGroupReconciler{
+					Client:      mgr.GetClient(),
+					Scheme:      mgr.GetScheme(),
+					VaultClient: vaultClient,
+					Log:         lg,
+				}).SetupWithManager(mgr)
+			},
+		},
+		{
+			name: "Schema",
+			setup: func() error {
+				return (&controller.SchemaReconciler{
+					Client:      mgr.GetClient(),
+					Scheme:      mgr.GetScheme(),
+					VaultClient: vaultClient,
+					Log:         lg,
+				}).SetupWithManager(mgr)
+			},
+		},
 	}
 
-	if err := (&controller.DatabaseReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		VaultClient: vaultClient,
-		Log:         lg,
-	}).SetupWithManager(mgr); err != nil {
-		lg.Error(err, "unable to create controller Database")
-		os.Exit(1)
+	for _, ctrlSetup := range controllerSetups {
+		if err := ctrlSetup.setup(); err != nil {
+			lg.Error(err, "unable to create controller", "controller", ctrlSetup.name)
+			os.Exit(1)
+		}
 	}
 
 	// +kubebuilder:scaffold:builder
@@ -471,17 +318,10 @@ func main() {
 		lg.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
-	// Register /postgresql_validate webhook handler
-	postgresqlValidateHandler := &postgresqlValidator{
-		Client:  mgr.GetClient(),
-		decoder: admission.NewDecoder(scheme),
-		log:     lg,
-	}
-	webhookServer.Register("/postgresqlvalidate", &webhook.Admission{Handler: postgresqlValidateHandler})
-	lg.Infow("Registered /postgresqlvalidate webhook handler")
+	// Register webhook handlers
+	webhookDecoder := admission.NewDecoder(scheme)
 
-	// Register /user_validate webhook handler
-	// Parse exclude user list from comma-separated string
+	// Parse exclude user list from comma-separated string (used for UserValidator)
 	excludeUserList := []string{}
 	if cfg.ExcludeUserList != "" {
 		excludeUserList = strings.Split(cfg.ExcludeUserList, ",")
@@ -491,19 +331,113 @@ func main() {
 		}
 		lg.Infow("Exclude user list configured", "users", excludeUserList)
 	}
-	userValidateHandler := &userValidator{
-		Client:          mgr.GetClient(),
-		decoder:         admission.NewDecoder(scheme),
-		log:             lg,
-		excludeUserList: excludeUserList,
+
+	// Define webhook registration configs
+	type webhookConfig struct {
+		path    string
+		handler admission.Handler
+		name    string
 	}
-	webhookServer.Register("/uservalidate", &webhook.Admission{Handler: userValidateHandler})
-	lg.Infow("Registered /uservalidate webhook handler")
+
+	webhookConfigs := []webhookConfig{
+		{
+			path: "/uservalidate",
+			handler: &webhookpkg.UserValidator{
+				Client:          mgr.GetClient(),
+				Decoder:         webhookDecoder,
+				Log:             lg,
+				ExcludeUserList: excludeUserList,
+			},
+			name: "uservalidate",
+		},
+		{
+			path: "/postgresqlvalidate",
+			handler: &webhookpkg.PostgresqlValidator{
+				Client:  mgr.GetClient(),
+				Decoder: webhookDecoder,
+				Log:     lg,
+			},
+			name: "postgresqlvalidate",
+		},
+		{
+			path: "/databasevalidate",
+			handler: &webhookpkg.DatabaseValidator{
+				Client:  mgr.GetClient(),
+				Decoder: webhookDecoder,
+				Log:     lg,
+			},
+			name: "databasevalidate",
+		},
+		{
+			path: "/grantvalidate",
+			handler: &webhookpkg.GrantValidator{
+				Client:  mgr.GetClient(),
+				Decoder: webhookDecoder,
+				Log:     lg,
+			},
+			name: "grantvalidate",
+		},
+		{
+			path: "/rolegroupvalidate",
+			handler: &webhookpkg.RoleGroupValidator{
+				Client:  mgr.GetClient(),
+				Decoder: webhookDecoder,
+				Log:     lg,
+			},
+			name: "rolegroupvalidate",
+		},
+		{
+			path: "/schemavalidate",
+			handler: &webhookpkg.SchemaValidator{
+				Client:  mgr.GetClient(),
+				Decoder: webhookDecoder,
+				Log:     lg,
+			},
+			name: "schemavalidate",
+		},
+	}
+
+	// Register all webhook handlers
+	for _, cfg := range webhookConfigs {
+		webhookServer.Register(cfg.path, &webhook.Admission{Handler: cfg.handler})
+		lg.Infow("Registered webhook handler", "path", cfg.path, "name", cfg.name)
+	}
 
 	if err := mgr.Add(webhookServer); err != nil {
 		lg.Error(err, "unable to set up webhook server")
 		os.Exit(1)
 	}
+
+	// Initialize metrics collector
+	metricsCollector := metrics.NewCollector(mgr.GetClient(), lg)
+
+	// Collect metrics on startup
+	startupCtx := context.Background()
+	if err := metricsCollector.CollectMetrics(startupCtx); err != nil {
+		lg.Error(err, "failed to collect initial metrics")
+		// Don't exit, metrics collection failure shouldn't prevent operator from starting
+	} else {
+		lg.Infow("Initial metrics collection completed")
+	}
+
+	// Set up periodic metrics collection (every 30 seconds)
+	// Use a context that will be cancelled when the manager stops
+	metricsCtx, metricsCancel := context.WithCancel(context.Background())
+	go func() {
+		defer metricsCancel()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := metricsCollector.CollectMetrics(metricsCtx); err != nil {
+					lg.Error(err, "failed to collect metrics")
+				}
+			case <-metricsCtx.Done():
+				return
+			}
+		}
+	}()
 
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		lg.Error(err, "problem starting postgresql operator")

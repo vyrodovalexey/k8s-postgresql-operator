@@ -1,6 +1,6 @@
 # Build the manager binary
 # Build the manager binary
-FROM golang:1.24 AS builder
+FROM golang:1.24-alpine3.23 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -22,11 +22,11 @@ COPY internal/ internal/
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOARCH=arm64 go build -a -o manager github.com/vyrodovalexey/k8s-postgresql-operator/cmd
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager github.com/vyrodovalexey/k8s-postgresql-operator/cmd
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM alpine:3.21
+FROM alpine:3.23
 RUN apk update \
     && apk upgrade --ignore alpine-baselayout \
     && apk add curl jq ca-certificates strace bash wget tar tzdata \

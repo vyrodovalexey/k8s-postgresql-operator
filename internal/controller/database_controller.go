@@ -20,9 +20,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"go.uber.org/zap"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	_ "github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
@@ -122,9 +123,15 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.Log.Infow("Vault client not available")
 	}
 
+	// Determine schema name - default to "public" if not specified
+	schemaName := database.Spec.Schema
+	if schemaName == "" {
+		schemaName = "public"
+	}
+
 	// Create or update database in PostgreSQL
 	err = r.createOrUpdateDatabase(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-		database.Spec.Database, database.Spec.Owner)
+		database.Spec.Database, database.Spec.Owner, schemaName)
 	if err != nil {
 		r.Log.Error(err, "Failed to create/update database in PostgreSQL", "database", database.Spec.Database)
 		database.Status.Created = false
@@ -134,7 +141,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		database.Status.Created = true
 		updateDatabaseCondition(database, "Ready", metav1.ConditionTrue, "Created",
 			fmt.Sprintf("Database %s successfully created in PostgreSQL", database.Spec.Database))
-		r.Log.Infow("Database successfully created in PostgreSQL", "PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database)
+		r.Log.Infow("Database successfully created in PostgreSQL", "PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database, "schema", schemaName)
 	}
 
 	now := metav1.Now()
@@ -168,7 +175,7 @@ func (r *DatabaseReconciler) findPostgresqlByID(ctx context.Context, postgresqlI
 }
 
 // createOrUpdateDatabase creates or updates a PostgreSQL database
-func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName, owner string) error {
+func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName, owner, schemaName string) error {
 	// Connect to PostgreSQL as admin user
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
 		host, port, adminUser, adminPassword, sslMode)
@@ -178,7 +185,6 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-
 		return fmt.Errorf("failed to open database connection: %w", err)
 	}
 	defer db.Close()
@@ -208,6 +214,38 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
+		}
+	}
+
+	// Create schema in the database if specified (and not "public" which is created by default)
+	if schemaName != "" && schemaName != "public" {
+		// Connect to the newly created database
+		connStr = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
+			host, port, adminUser, adminPassword, databaseName, sslMode)
+
+		dbSchema, err := sql.Open("postgres", connStr)
+		if err != nil {
+			return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
+		}
+		defer dbSchema.Close()
+
+		// Escape schema name for SQL identifier
+		escapedSchemaName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(schemaName, `"`, `""`))
+
+		// Check if schema exists
+		var schemaExists bool
+		err = dbSchema.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)", schemaName).Scan(&schemaExists)
+		if err != nil {
+			return fmt.Errorf("failed to check if schema exists: %w", err)
+		}
+
+		if schemaExists {
+			// Update schema owner
+			query := fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", escapedSchemaName, escapedOwner)
+			_, err = dbSchema.ExecContext(connCtx, query)
+			if err != nil {
+				return fmt.Errorf("failed to update schema owner: %w", err)
+			}
 		}
 	}
 

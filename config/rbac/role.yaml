@@ -49,7 +49,10 @@ rules:
   - postgresql-operator.vyrodovalexey.github.com
   resources:
   - databases
+  - grants
   - postgresqls
+  - rolegroups
+  - schemas
   - users
   verbs:
   - get
@@ -59,7 +62,10 @@ rules:
   - postgresql-operator.vyrodovalexey.github.com
   resources:
   - databases/finalizers
+  - grants/finalizers
   - postgresqls/finalizers
+  - rolegroups/finalizers
+  - schemas/finalizers
   - users/finalizers
   verbs:
   - update
@@ -67,7 +73,10 @@ rules:
   - postgresql-operator.vyrodovalexey.github.com
   resources:
   - databases/status
+  - grants/status
   - postgresqls/status
+  - rolegroups/status
+  - schemas/status
   - users/status
   verbs:
   - get

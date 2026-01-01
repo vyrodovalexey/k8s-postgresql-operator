@@ -20,29 +20,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// DatabaseSpec defines the desired state of Database
-type DatabaseSpec struct {
-	// Database is the name of the PostgreSQL database to create
+// RoleGroupSpec defines the desired state of RoleGroup
+type RoleGroupSpec struct {
+	// GroupRole is the name of the PostgreSQL role that will be the group
 	// +required
-	Database string `json:"database"`
+	GroupRole string `json:"groupRole"`
 
-	// Owner is the PostgreSQL user that will own the database
+	// MemberRoles is the list of PostgreSQL role names that will be members of the group role
 	// +required
-	Owner string `json:"owner"`
+	MemberRoles []string `json:"memberRoles"`
 
-	// Schema is the name of the PostgreSQL schema to create in the database
-	// If not specified, defaults to "public"
-	// +optional
-	Schema string `json:"schema,omitempty"`
-
-	// PostgresqlID is the ID of the PostgreSQL instance where this database should be created
+	// PostgresqlID is the ID of the PostgreSQL instance where this role group should be created
 	// +required
 	PostgresqlID string `json:"postgresqlID"`
 }
 
-// DatabaseStatus defines the observed state of Database
-type DatabaseStatus struct {
-	// Created indicates whether the database has been successfully created in PostgreSQL
+// RoleGroupStatus defines the observed state of RoleGroup
+type RoleGroupStatus struct {
+	// Created indicates whether the role group has been successfully created in PostgreSQL
 	// +optional
 	Created bool `json:"created,omitempty"`
 
@@ -50,7 +45,7 @@ type DatabaseStatus struct {
 	// +optional
 	LastSyncAttempt *metav1.Time `json:"lastSyncAttempt,omitempty"`
 
-	// Conditions represent the latest available observations of the Database state
+	// Conditions represent the latest available observations of the RoleGroup state
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
@@ -58,24 +53,24 @@ type DatabaseStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// Database is the Schema for the databases API
-type Database struct {
+// RoleGroup is the Schema for the rolegroups API
+type RoleGroup struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   DatabaseSpec   `json:"spec,omitempty"`
-	Status DatabaseStatus `json:"status,omitempty"`
+	Spec   RoleGroupSpec   `json:"spec,omitempty"`
+	Status RoleGroupStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// DatabaseList contains a list of Database
-type DatabaseList struct {
+// RoleGroupList contains a list of RoleGroup
+type RoleGroupList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Database `json:"items"`
+	Items           []RoleGroup `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Database{}, &DatabaseList{})
+	SchemeBuilder.Register(&RoleGroup{}, &RoleGroupList{})
 }

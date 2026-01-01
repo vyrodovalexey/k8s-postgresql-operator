@@ -16,7 +16,7 @@ spec:
     # - "192.168.1.100"
     # - "postgres-service.namespace.svc.cluster.local"
     postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
-    address: "192.168.0.36"
+    address: "192.168.0.44"
 
     # Port number (defaults to 5432 if not specified)
     port: 5432

@@ -77,7 +77,7 @@ spec:
       containers:
       - env:
         - name: VAULT_ADDR
-          value: "http://192.168.0.36:8200"
+          value: "http://192.168.0.44:8200"
         - name: VAULT_ROLE
           value: "k8s-postgresql-operator"
         - name: ENABLE_LEADER_ELECTION

@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: databases.postgresql-operator.vyrodovalexey.github.com
+  name: grants.postgresql-operator.vyrodovalexey.github.com
 spec:
   group: postgresql-operator.vyrodovalexey.github.com
   names:
-    kind: Database
-    listKind: DatabaseList
-    plural: databases
-    singular: database
+    kind: Grant
+    listKind: GrantList
+    plural: grants
+    singular: grant
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Database is the Schema for the databases API
+        description: Grant is the Schema for the grants API
         properties:
           apiVersion:
             description: |-
@@ -37,34 +37,101 @@ spec:
           metadata:
             type: object
           spec:
-            description: DatabaseSpec defines the desired state of Database
+            description: GrantSpec defines the desired state of Grant
             properties:
               database:
-                description: Database is the name of the PostgreSQL database to create
+                description: Database is the PostgreSQL database name
                 type: string
-              owner:
-                description: Owner is the PostgreSQL user that will own the database
-                type: string
+              defaultPrivileges:
+                description: DefaultPrivileges is the list of default privileges for
+                  future objects
+                items:
+                  description: DefaultPrivilegeItem defines default privileges for
+                    future objects
+                  properties:
+                    objectType:
+                      description: 'ObjectType is the type of object: tables, sequences,
+                        functions, types'
+                      type: string
+                    privileges:
+                      description: Privileges is the list of privileges to grant
+                      items:
+                        type: string
+                      type: array
+                    schema:
+                      description: Schema is the schema name
+                      type: string
+                  required:
+                  - objectType
+                  - privileges
+                  - schema
+                  type: object
+                type: array
+              grants:
+                description: Grants is the list of grants to apply
+                items:
+                  description: GrantItem defines a single grant
+                  properties:
+                    function:
+                      description: Function is the function name (required for function
+                        type)
+                      type: string
+                    privileges:
+                      description: Privileges is the list of privileges to grant
+                      items:
+                        type: string
+                      type: array
+                    schema:
+                      description: Schema is the schema name (required for schema,
+                        table, sequence, function, all_tables, all_sequences types)
+                      type: string
+                    sequence:
+                      description: Sequence is the sequence name (required for sequence
+                        type)
+                      type: string
+                    table:
+                      description: Table is the table name (required for table type)
+                      type: string
+                    type:
+                      description: 'Type is the type of grant: database, schema, table,
+                        sequence, function, all_tables, all_sequences'
+                      enum:
+                      - database
+                      - schema
+                      - table
+                      - sequence
+                      - function
+                      - all_tables
+                      - all_sequences
+                      type: string
+                  required:
+                  - privileges
+                  - type
+                  type: object
+                type: array
               postgresqlID:
                 description: PostgresqlID is the ID of the PostgreSQL instance where
-                  this database should be created
+                  grants should be applied
                 type: string
-              schema:
-                description: |-
-                  Schema is the name of the PostgreSQL schema to create in the database
-                  If not specified, defaults to "public"
+              role:
+                description: Role is the PostgreSQL role/user to grant permissions
+                  to
                 type: string
             required:
             - database
-            - owner
             - postgresqlID
+            - role
             type: object
           status:
-            description: DatabaseStatus defines the observed state of Database
+            description: GrantStatus defines the observed state of Grant
             properties:
+              applied:
+                description: Applied indicates whether the grants have been successfully
+                  applied in PostgreSQL
+                type: boolean
               conditions:
                 description: Conditions represent the latest available observations
-                  of the Database state
+                  of the Grant state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -120,10 +187,6 @@ spec:
                   - type
                   type: object
                 type: array
-              created:
-                description: Created indicates whether the database has been successfully
-                  created in PostgreSQL
-                type: boolean
               lastSyncAttempt:
                 description: LastSyncAttempt is the timestamp of the last sync attempt
                 format: date-time
