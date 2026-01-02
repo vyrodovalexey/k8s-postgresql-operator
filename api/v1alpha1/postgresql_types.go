@@ -52,14 +52,14 @@ type ExternalPostgresqlInstance struct {
 
 	// Database is the name of the database to connect to
 	// +optional
-	//Database string `json:"database,omitempty"`
+	// Database string `json:"database,omitempty"`
 
-	//Username string `json:"username"`
-	//Password string `json:"password"`
+	// Username string `json:"username"`
+	// Password string `json:"password"`
 	// CredentialsSecretRef is a reference to a Kubernetes secret containing PostgreSQL credentials
 	// The secret should contain keys: username and password
 	// +optional
-	//CredentialsSecretRef *corev1.SecretReference `json:"credentialsSecretRef,omitempty"`
+	// CredentialsSecretRef *corev1.SecretReference `json:"credentialsSecretRef,omitempty"`
 
 	// SSLMode specifies the SSL connection mode
 	// Valid values: disable, require, verify-ca, verify-full

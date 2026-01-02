@@ -21,20 +21,20 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 	"math/big"
 	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
@@ -43,16 +43,16 @@ type UserReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	VaultClient *vault.Client
+	Log         *zap.SugaredLogger
 }
 
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=users,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=users/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=users/finalizers,verbs=update
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users/finalizers,verbs=update
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
 
 	// Fetch the User instance
 	user := &instancev1alpha1.User{}
@@ -60,29 +60,29 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		log.Error(err, "Failed to get User")
+		r.Log.Error(err, "Failed to get User")
 		return ctrl.Result{}, err
 	}
 
 	// Find PostgreSQL instance by PostgresqlID
 	postgresql, err := r.findPostgresqlByID(ctx, user.Spec.PostgresqlID)
 	if err != nil {
-		log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", user.Spec.PostgresqlID)
+		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", user.Spec.PostgresqlID)
 		updateUserCondition(user, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
 			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", user.Spec.PostgresqlID, err))
 		if err := r.Status().Update(ctx, user); err != nil {
-			log.Error(err, "Failed to update User status")
+			r.Log.Error(err, "Failed to update User status")
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Check if PostgreSQL instance is connected
 	if !postgresql.Status.Connected {
-		log.Info("PostgreSQL instance is not connected, waiting", "postgresqlID", user.Spec.PostgresqlID)
+		r.Log.Info("PostgreSQL instance is not connected, waiting", "postgresqlID", user.Spec.PostgresqlID)
 		updateUserCondition(user, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
 			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", user.Spec.PostgresqlID))
 		if err := r.Status().Update(ctx, user); err != nil {
-			log.Error(err, "Failed to update User status")
+			r.Log.Error(err, "Failed to update User status")
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -90,11 +90,11 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", user.Spec.PostgresqlID)
+		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", user.Spec.PostgresqlID)
 		updateUserCondition(user, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, user); err != nil {
-			log.Error(err, "Failed to update User status")
+			r.Log.Error(err, "Failed to update User status")
 		}
 		return ctrl.Result{}, nil
 	}
@@ -106,7 +106,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = "require"
+		sslMode = defaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword, dbPassword string
@@ -115,53 +115,69 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if r.VaultClient != nil {
 		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, user.Spec.PostgresqlID)
 		if err != nil {
-			log.Error(err, "Failed to get credentials from Vault", "postgresqlID", user.Spec.PostgresqlID)
+			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", user.Spec.PostgresqlID)
 		} else {
 			postgresUsername = vaultUsername
 			postgresPassword = vaultPassword
-			log.Info("Credentials retrieved from Vault by user controller", "postgresqlID", user.Spec.PostgresqlID)
+			r.Log.Info("Credentials retrieved from Vault by user controller, ", "postgresqlID: ", user.Spec.PostgresqlID)
 		}
 	} else {
-		log.Info("Vault client not available")
+		r.Log.Info("Vault client not available")
 	}
 
 	// Get user password from Vault or generate/store it
 	if r.VaultClient != nil {
 		vaultUserPassword, err := r.VaultClient.GetPostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username)
-		if err != nil || vaultUserPassword == "" {
-			log.Info("User credentials not found in Vault, generating new password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username, "error", err)
-			// Generate random password
+		credentialsExist := err == nil && vaultUserPassword != ""
 
-			// If no password in spec, generate a secure random one
+		// Generate new password if:
+		// 1. Credentials don't exist in Vault (regardless of updatePassword option)
+		// 2. Credentials exist and updatePassword is true
+		shouldGeneratePassword := !credentialsExist || user.Spec.UpdatePassword
+
+		if shouldGeneratePassword {
+			if !credentialsExist {
+				r.Log.Info("User credentials not found in Vault, generating new password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username, "error", err)
+			} else if user.Spec.UpdatePassword {
+				r.Log.Info("updatePassword is true, regenerating password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			}
+
+			// Generate random password
 			generatedPassword, err := generateRandomPassword(32)
 			if err != nil {
-				log.Error(err, "Failed to generate random password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Error(err, "Failed to generate random password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 				return ctrl.Result{}, fmt.Errorf("failed to generate random password: %w", err)
 			}
 			dbPassword = generatedPassword
-			log.Info("Generated random password for user", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			r.Log.Info("Generated random password for user", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 
+			// Store/update password in Vault
 			err = r.VaultClient.StorePostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username, dbPassword)
 			if err != nil {
-				log.Error(err, "Failed to store user credentials in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Error(err, "Failed to store user credentials in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 				// Continue with reconciliation even if Vault storage fails
 			} else {
-				log.Info("User credentials stored in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				if credentialsExist {
+					r.Log.Info("User credentials updated in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				} else {
+					r.Log.Info("User credentials stored in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				}
 			}
 		} else {
+			// Use existing password from Vault
 			dbPassword = vaultUserPassword
-			log.Info("User credentials retrieved from Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			r.Log.Info("User credentials retrieved from Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 		}
 	} else {
 		// Use password from spec if Vault is not available
-		log.Info("Vault client not available")
+		r.Log.Info("Vault client not available")
 	}
 
 	// Create or update user in PostgreSQL
 	err = r.createOrUpdateUser(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
 		user.Spec.Username, dbPassword)
 	if err != nil {
-		log.Error(err, "Failed to create/update user in PostgreSQL", "username", user.Spec.Username)
+		r.Log.Error(err, "Failed to create/update user in PostgreSQL, ", "username: ", user.Spec.Username)
 		user.Status.Created = false
 		updateUserCondition(user, "Ready", metav1.ConditionFalse, "CreateFailed",
 			fmt.Sprintf("Failed to create user: %v", err))
@@ -176,11 +192,11 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Update the status
 	if err := r.Status().Update(ctx, user); err != nil {
-		log.Error(err, "Failed to update User status")
+		r.Log.Error(err, "Failed to update User status")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Successfully reconciled User", "username", user.Spec.Username)
+	r.Log.Info("Successfully reconciled User with ", "username: ", user.Spec.Username)
 	return ctrl.Result{}, nil
 }
 

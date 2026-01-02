@@ -21,10 +21,7 @@ import (
 	"fmt"
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-var log = logf.Log.WithName("vault")
 
 // Client wraps the Vault API client
 type Client struct {
@@ -38,11 +35,10 @@ type Client struct {
 // VAULT_ROLE: Vault role for Kubernetes authentication (required)
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
 func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
-
 	if vaultRole == "" {
 		return nil, fmt.Errorf("VAULT_ROLE environment variable is not set (required for Kubernetes auth)")
 	}
-	log.Info("Vault ENV", "VAULT_ADDR", vaultAddr, "VAULT_ROLE", vaultRole, "VAULT_K8S_TOKEN_PATH", tokenPath)
+
 	config := api.DefaultConfig()
 	config.Address = vaultAddr
 
@@ -75,9 +71,23 @@ func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath
 		return nil, fmt.Errorf("authentication returned empty auth info")
 	}
 
-	log.Info("Successfully authenticated with Vault using Kubernetes auth", "role", vaultRole)
-
 	return &Client{client: client, vaultMountPoint: vaultMountPoint, vaultSecretPath: vaultSecretPath}, nil
+}
+
+// CheckHealth checks if Vault is available and healthy
+func (c *Client) CheckHealth(ctx context.Context) error {
+	health, err := c.client.Sys().Health()
+	if err != nil {
+		return fmt.Errorf("failed to check Vault health: %w", err)
+	}
+
+	if health == nil {
+		return fmt.Errorf("Vault health check returned nil")
+	}
+
+	// Health check is successful if we get a response (even if sealed)
+	// Being sealed is a different state than being unavailable
+	return nil
 }
 
 // GetPostgresqlCredentials retrieves PostgreSQL credentials from Vault KV store
@@ -135,7 +145,6 @@ func (c *Client) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID,
 
 // StorePostgresqlUserCredentials
 func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlID, username, password string) error {
-
 	// Prepare the data to store
 	data := map[string]interface{}{
 		"password": password,
@@ -149,9 +158,7 @@ func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlI
 
 	if err != nil {
 		// If KV v2 fails, try KV v1
-		log.Info("KV v2 write failed", "error", err, "path", kv2Path)
-	} else {
-		log.Info("Credentials stored in Vault KV v2", "path", kv2Path)
+		return err
 	}
 
 	return nil

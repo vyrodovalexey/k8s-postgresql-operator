@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	_ "github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
@@ -32,7 +34,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
@@ -41,46 +42,45 @@ type DatabaseReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	VaultClient *vault.Client
+	Log         *zap.SugaredLogger
 }
 
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=databases,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=databases/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=databases/finalizers,verbs=update
-// +kubebuilder:rbac:groups=instance.alexvyrodov.example,resources=postgresqls,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases/finalizers,verbs=update
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
 	// Fetch the Database instance
 	database := &instancev1alpha1.Database{}
 	if err := r.Get(ctx, req.NamespacedName, database); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		log.Error(err, "Failed to get Database")
+		r.Log.Error(err, "Failed to get Database")
 		return ctrl.Result{}, err
 	}
 
 	// Find PostgreSQL instance by PostgresqlID
 	postgresql, err := r.findPostgresqlByID(ctx, database.Spec.PostgresqlID)
 	if err != nil {
-		log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", database.Spec.PostgresqlID)
+		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", database.Spec.PostgresqlID)
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
 			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", database.Spec.PostgresqlID, err))
 		if err := r.Status().Update(ctx, database); err != nil {
-			log.Error(err, "Failed to update Database status")
+			r.Log.Error(err, "Failed to update Database status")
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Check if PostgreSQL instance is connected
 	if !postgresql.Status.Connected {
-		log.Info("PostgreSQL instance is not connected, waiting", "postgresqlID", database.Spec.PostgresqlID)
+		r.Log.Infow("PostgreSQL instance is not connected, waiting", "postgresqlID", database.Spec.PostgresqlID)
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
 			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", database.Spec.PostgresqlID))
 		if err := r.Status().Update(ctx, database); err != nil {
-			log.Error(err, "Failed to update Database status")
+			r.Log.Error(err, "Failed to update Database status")
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -88,11 +88,11 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", database.Spec.PostgresqlID)
+		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration ", "postgresqlID: ", database.Spec.PostgresqlID)
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, database); err != nil {
-			log.Error(err, "Failed to update Database status")
+			r.Log.Error(err, "Failed to update Database status")
 		}
 		return ctrl.Result{}, nil
 	}
@@ -104,29 +104,35 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = "require"
+		sslMode = defaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword string
 	if r.VaultClient != nil {
 		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
 		if err != nil {
-			log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
 		} else {
 			postgresUsername = vaultUsername
 			postgresPassword = vaultPassword
-			log.Info("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
 		}
 	} else {
 		// Use password from spec if Vault is not available
-		log.Info("Vault client not available")
+		r.Log.Infow("Vault client not available")
+	}
+
+	// Determine schema name - default to "public" if not specified
+	schemaName := database.Spec.Schema
+	if schemaName == "" {
+		schemaName = "public"
 	}
 
 	// Create or update database in PostgreSQL
 	err = r.createOrUpdateDatabase(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-		database.Spec.Database, database.Spec.Owner)
+		database.Spec.Database, database.Spec.Owner, schemaName)
 	if err != nil {
-		log.Error(err, "Failed to create/update database in PostgreSQL", "database", database.Spec.Database)
+		r.Log.Error(err, "Failed to create/update database in PostgreSQL", "database", database.Spec.Database)
 		database.Status.Created = false
 		updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "CreateFailed",
 			fmt.Sprintf("Failed to create database: %v", err))
@@ -134,7 +140,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		database.Status.Created = true
 		updateDatabaseCondition(database, "Ready", metav1.ConditionTrue, "Created",
 			fmt.Sprintf("Database %s successfully created in PostgreSQL", database.Spec.Database))
-		log.Info("Database successfully created in PostgreSQL", "PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database)
+		r.Log.Infow("Database successfully created in PostgreSQL", "PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database, "schema", schemaName)
 	}
 
 	now := metav1.Now()
@@ -142,11 +148,11 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Update the status
 	if err := r.Status().Update(ctx, database); err != nil {
-		log.Error(err, "Failed to update Database status")
+		r.Log.Error(err, "Failed to update Database status")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Successfully reconciled Database", "database", database.Spec.Database)
+	r.Log.Infow("Successfully reconciled Database", "database", database.Spec.Database)
 	return ctrl.Result{}, nil
 }
 
@@ -168,7 +174,7 @@ func (r *DatabaseReconciler) findPostgresqlByID(ctx context.Context, postgresqlI
 }
 
 // createOrUpdateDatabase creates or updates a PostgreSQL database
-func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName, owner string) error {
+func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName, owner, schemaName string) error {
 	// Connect to PostgreSQL as admin user
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
 		host, port, adminUser, adminPassword, sslMode)
@@ -178,7 +184,6 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-
 		return fmt.Errorf("failed to open database connection: %w", err)
 	}
 	defer db.Close()
@@ -208,6 +213,38 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
+		}
+	}
+
+	// Create schema in the database if specified (and not "public" which is created by default)
+	if schemaName != "" && schemaName != "public" {
+		// Connect to the newly created database
+		connStr = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
+			host, port, adminUser, adminPassword, databaseName, sslMode)
+
+		dbSchema, err := sql.Open("postgres", connStr)
+		if err != nil {
+			return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
+		}
+		defer db.Close()
+
+		// Escape schema name for SQL identifier
+		escapedSchemaName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(schemaName, `"`, `""`))
+
+		// Check if schema exists
+		var schemaExists bool
+		err = dbSchema.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)", schemaName).Scan(&schemaExists)
+		if err != nil {
+			return fmt.Errorf("failed to check if schema exists: %w", err)
+		}
+
+		if schemaExists {
+			// Update schema owner
+			query := fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", escapedSchemaName, escapedOwner)
+			_, err = dbSchema.ExecContext(connCtx, query)
+			if err != nil {
+				return fmt.Errorf("failed to update schema owner: %w", err)
+			}
 		}
 	}
 

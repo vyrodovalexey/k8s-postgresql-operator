@@ -1,52 +1,86 @@
 version: "2"
+
 run:
-  allow-parallel-runners: true
+  timeout: 5m
+  tests: false
+
 linters:
   default: none
   enable:
-    - copyloopvar
-    - dupl
-    - errcheck
-    - ginkgolinter
-    - goconst
-    - gocyclo
     - govet
+    - errcheck
+    - staticcheck
+    - unused
     - ineffassign
+    - bodyclose
+    - noctx
+#    - gosec
+    - unconvert
+    - goconst
+    - asciicheck
+    - goheader
     - lll
-    - misspell
+#    - unparam
+    - dogsled
     - nakedret
     - prealloc
-    - revive
-    - staticcheck
-    - unconvert
-    - unparam
-    - unused
+    - gocritic
+#    - whitespace
+    - goprintffuncname
+    - testpackage
+    - nestif
+    - sqlclosecheck
+    - gocyclo
+    - funlen
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+    paths:
+      - bin
+      - hack
+      - test
+      - vendor
+      - third_party
+      - ".*generate\\.go$"
+
   settings:
-    revive:
-      rules:
-        - name: comment-spacings
-        - name: import-shadowing
-  exclusions:
-    generated: lax
-    rules:
-      - linters:
-          - lll
-        path: api/*
-      - linters:
-          - dupl
-          - lll
-        path: internal/*
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
-formatters:
-  enable:
-    - gofmt
-    - goimports
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+      disabled-checks:
+        - unnecessaryDefer
+        - appendAssign
+        - importShadow
+        - sloppyReassign
+        - ifElseChain
+        - octalLiteral
+        - whyNoLint
+        - wrapperFunc
+        - rangeValCopy
+        - hugeParam
+        - sprintfQuotedString
+        - nestingReduce
+        - paramTypeCombine
+    lll:
+      line-length: 300
+    gocyclo:
+      min-complexity: 25
+    nestif:
+      min-complexity: 16
+    funlen:
+      lines: 500
+      statements: 90
+
+#formatters:
+#  enable:
+#    - gofmt
+#    - goimports

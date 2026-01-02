@@ -30,6 +30,11 @@ type DatabaseSpec struct {
 	// +required
 	Owner string `json:"owner"`
 
+	// Schema is the name of the PostgreSQL schema to create in the database
+	// If not specified, defaults to "public"
+	// +optional
+	Schema string `json:"schema,omitempty"`
+
 	// PostgresqlID is the ID of the PostgreSQL instance where this database should be created
 	// +required
 	PostgresqlID string `json:"postgresqlID"`
