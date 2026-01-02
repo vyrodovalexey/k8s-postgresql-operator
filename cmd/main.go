@@ -109,7 +109,7 @@ func main() {
 
 	// Generate or use provided webhook certificates
 	var webhookCertPath, webhookKeyPath string
-	if len(cfg.WebhookCertPath) > 0 {
+	if cfg.WebhookCertPath != "" {
 		// Use provided certificates
 		webhookCertPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertName)
 		webhookKeyPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertKey)
@@ -458,5 +458,4 @@ func main() {
 		lg.Error(err, "problem starting postgresql operator")
 		os.Exit(1)
 	}
-
 }

@@ -81,7 +81,6 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 // reconcileExternalInstance handles reconciliation for external PostgreSQL instances
 func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, postgresql *instancev1alpha1.Postgresql) (ctrl.Result, error) {
-
 	externalInstance := postgresql.Spec.ExternalInstance
 
 	// Set default port if not specified
@@ -100,12 +99,8 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 		if err != nil {
 			r.Log.Error(err, "Failed to get credentials from Vault, ", "postgresqlID: ", externalInstance.PostgresqlID)
 		} else {
-			//if username == "" {
 			username = vaultUsername
-			//}
-			//if password == "" {
 			password = vaultPassword
-			//}
 			r.Log.Info("Credentials retrieved from Vault, ", "postgresqlID: ", externalInstance.PostgresqlID)
 		}
 	}

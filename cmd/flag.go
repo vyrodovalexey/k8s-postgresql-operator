@@ -51,5 +51,4 @@ func ConfigParser(cfg *config.Config) {
 
 		log.Printf("can't parse ENV: %v", err)
 	}
-
 }

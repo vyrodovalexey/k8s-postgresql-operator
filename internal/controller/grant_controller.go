@@ -52,7 +52,6 @@ type GrantReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *GrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-
 	// Fetch the Grant instance
 	grant := &instancev1alpha1.Grant{}
 	if err := r.Get(ctx, req.NamespacedName, grant); err != nil {

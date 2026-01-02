@@ -59,7 +59,7 @@ type ExternalPostgresqlInstance struct {
 	// CredentialsSecretRef is a reference to a Kubernetes secret containing PostgreSQL credentials
 	// The secret should contain keys: username and password
 	// +optional
-	//CredentialsSecretRef *corev1.SecretReference `json:"credentialsSecretRef,omitempty"`
+	// CredentialsSecretRef *corev1.SecretReference `json:"credentialsSecretRef,omitempty"`
 
 	// SSLMode specifies the SSL connection mode
 	// Valid values: disable, require, verify-ca, verify-full

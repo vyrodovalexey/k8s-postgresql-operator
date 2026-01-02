@@ -19,19 +19,19 @@ linters:
     - goconst
     - asciicheck
     - goheader
-#    - lll
+    - lll
 #    - unparam
     - dogsled
     - nakedret
     - prealloc
-#    - gocritic
-    - whitespace
+    - gocritic
+#    - whitespace
     - goprintffuncname
     - testpackage
-#    - nestif
+    - nestif
     - sqlclosecheck
-#    - gocyclo
-#    - funlen
+    - gocyclo
+    - funlen
   exclusions:
     generated: lax
     presets:
@@ -65,13 +65,16 @@ linters:
         - octalLiteral
         - whyNoLint
         - wrapperFunc
+        - rangeValCopy
     lll:
-      line-length: 140
+      line-length: 180
     gocyclo:
-      min-complexity: 10
+      min-complexity: 25
+    nestif:
+      min-complexity: 16
     funlen:
       lines: 100
-      statements: 70
+      statements: 90
 
 formatters:
   enable:
