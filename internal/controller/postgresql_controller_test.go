@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -34,6 +36,31 @@ import (
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 )
+
+// MockPostgresqlVaultClient is a mock implementation of vault.Client for testing
+type MockPostgresqlVaultClient struct {
+	mock.Mock
+}
+
+func (m *MockPostgresqlVaultClient) GetPostgresqlCredentials(ctx context.Context, postgresqlID string) (string, string, error) {
+	args := m.Called(ctx, postgresqlID)
+	return args.String(0), args.String(1), args.Error(2)
+}
+
+func (m *MockPostgresqlVaultClient) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID, username string) (string, error) {
+	args := m.Called(ctx, postgresqlID, username)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockPostgresqlVaultClient) StorePostgresqlUserCredentials(ctx context.Context, postgresqlID, username, password string) error {
+	args := m.Called(ctx, postgresqlID, username, password)
+	return args.Error(0)
+}
+
+func (m *MockPostgresqlVaultClient) StorePostgresqlCredentials(ctx context.Context, postgresqlID, username, password string) error {
+	args := m.Called(ctx, postgresqlID, username, password)
+	return args.Error(0)
+}
 
 // MockClient is a mock implementation of client.Client for testing
 type MockControllerClient struct {
@@ -251,4 +278,82 @@ func TestUpdateCondition(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, postgresql.Status.Conditions[0].Status)
 	assert.Equal(t, "NewReason", postgresql.Status.Conditions[0].Reason)
 	assert.Equal(t, "New message", postgresql.Status.Conditions[0].Message)
+}
+
+func TestPostgresqlReconciler_Reconcile_GetError(t *testing.T) {
+	mockClient := new(MockControllerClient)
+	logger := zap.NewNop().Sugar()
+
+	reconciler := &PostgresqlReconciler{
+		Client: mockClient,
+		Log:    logger,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-postgresql",
+			Namespace: "default",
+		},
+	}
+
+	mockClient.On("Get", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, fmt.Errorf("some error"))
+
+	result, err := reconciler.Reconcile(context.Background(), req)
+
+	assert.Error(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+	mockClient.AssertExpectations(t)
+}
+
+func TestPostgresqlReconciler_Reconcile_WithExternalInstance(t *testing.T) {
+	mockClient := new(MockControllerClient)
+	mockStatusWriter := new(MockStatusWriter)
+	logger := zap.NewNop().Sugar()
+
+	reconciler := &PostgresqlReconciler{
+		Client:      mockClient,
+		VaultClient: nil, // No vault client for this test
+		Log:         logger,
+	}
+
+	postgresql := &instancev1alpha1.Postgresql{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-postgresql",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.PostgresqlSpec{
+			ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+				PostgresqlID: "test-id",
+				Address:      "localhost",
+				Port:         5432,
+				SSLMode:      "require",
+			},
+		},
+		Status: instancev1alpha1.PostgresqlStatus{
+			Connected: false,
+		},
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-postgresql",
+			Namespace: "default",
+		},
+	}
+
+	mockClient.On("Get", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(postgresql, nil).Run(func(args mock.Arguments) {
+		obj := args.Get(2).(*instancev1alpha1.Postgresql)
+		*obj = *postgresql
+	})
+	// Vault client is nil, so it won't be called
+	mockClient.On("Status").Return(mockStatusWriter)
+	mockStatusWriter.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	result, err := reconciler.Reconcile(context.Background(), req)
+
+	// Should requeue even if connection fails
+	assert.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: 30 * time.Second}, result)
+	mockClient.AssertExpectations(t)
+	mockStatusWriter.AssertExpectations(t)
 }
