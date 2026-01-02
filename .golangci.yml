@@ -49,7 +49,6 @@ linters:
     - unused # Checks Go code for unused constants, variables, functions and types
     - gosimple # Linter for Go source code that specializes in simplifying a code
     - ineffassign # Detects when assignments to existing variables are not used
-    - typecheck # Like the front-end of a Go compiler, parses and type-checks Go code
     - bodyclose # checks whether HTTP response body is closed successfully
     - noctx # noctx finds sending http request without context.Context
     - stylecheck # Stylecheck is a replacement for golint
