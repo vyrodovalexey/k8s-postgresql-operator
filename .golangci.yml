@@ -1,52 +1,81 @@
-version: "2"
 run:
-  allow-parallel-runners: true
+  timeout: 5m
+  tests: false
+  skip-dirs:
+    - bin
+    - hack
+    - test
+    - venfor
+  skip-dirs-use-default: true
+  skip-files:
+    - generate.go
+
+linters-settings:
+  goconst:
+    min-len: 2
+    min-occurrences: 3
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - unnecessaryDefer
+      - appendAssign
+      - importShadow
+      - sloppyReassign
+      - dupImport # https://github.com/go-critic/go-critic/issues/845
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - wrapperFunc
+  lll:
+    line-length: 140
+  gocyclo:
+    min-complexity: 10
+  funlen:
+    lines: 100
+    statements: 70
+
 linters:
-  default: none
+  disable-all: true
   enable:
-    - copyloopvar
-    - dupl
-    - errcheck
-    - ginkgolinter
-    - goconst
+    - govet # Vet examines Go source code and reports suspicious constructs, such as Printf calls whose arguments do not align with the format string
+    - errcheck # Errcheck is a program for checking for unchecked errors in go programs. These unchecked errors can be critical bugs in some cases
+    - staticcheck # Staticcheck is a go vet on steroids, applying a ton of static analysis checks
+    - unused # Checks Go code for unused constants, variables, functions and types
+    - gosimple # Linter for Go source code that specializes in simplifying a code
+    - ineffassign # Detects when assignments to existing variables are not used
+    - typecheck # Like the front-end of a Go compiler, parses and type-checks Go code
+    - bodyclose # checks whether HTTP response body is closed successfully
+    - noctx # noctx finds sending http request without context.Context
+    - stylecheck # Stylecheck is a replacement for golint
+    - gosec # Inspects source code for security problems
+    - unconvert # Remove unnecessary type conversions
+    - goconst # Finds repeated strings that could be replaced by a constant
+    - asciicheck # Simple linter to check that your code does not contain non-ASCII identifiers
+    - gofmt # Gofmt checks whether code was gofmt-ed. By default this tool runs with -s option to check for code simplification
+    - goimports # Goimports does everything that gofmt does. Additionally it checks unused imports
+    - goheader # Checks is file header matches to pattern
+    - lll # Reports long lines
+    - unparam # Reports unused function parameters
+    - dogsled # Checks assignments with too many blank identifiers (e.g. x, , , _, := f())
+    - nakedret # Finds naked returns in functions greater than a specified function length
+    - prealloc # Finds slice declarations that could potentially be preallocated
+    - gocritic # The most opinionated Go source code linter
+    - whitespace # Tool for detection of leading and trailing whitespace
+    - goprintffuncname # Checks that printf-like functions are named with f at the end
+    - testpackage # linter that makes you use a separate _test package
+    - nestif # Reports deeply nested if statements
+    - exportloopref # checks for pointers to enclosing loop variables
+    - sqlclosecheck # Checks that sql.Rows and sql.Stmt are closed.
     - gocyclo
-    - govet
-    - ineffassign
-    - lll
-    - misspell
-    - nakedret
-    - prealloc
-    - revive
-    - staticcheck
-    - unconvert
-    - unparam
-    - unused
-  settings:
-    revive:
-      rules:
-        - name: comment-spacings
-        - name: import-shadowing
-  exclusions:
-    generated: lax
-    rules:
-      - linters:
-          - lll
-        path: api/*
-      - linters:
-          - dupl
-          - lll
-        path: internal/*
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
-formatters:
-  enable:
-    - gofmt
-    - goimports
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+    - funlen
+issues:
+  # Excluding configuration per-path, per-linter, per-text and per-source
+  exclude-rules:
+    - linters:
+        - staticcheck
+      text: "SA1029: should not use built-in type string as key for value; define your own type to avoid collisions"

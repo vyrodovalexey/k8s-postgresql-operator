@@ -207,11 +207,7 @@ func (r *GrantReconciler) applyGrants(ctx context.Context, host string, port int
 		if err != nil {
 			return fmt.Errorf("failed to open database connection to postgres: %w", err)
 		}
-		defer func() {
-			if closeErr := db.Close(); closeErr != nil {
-				// Log error but don't fail - connection may already be closed
-			}
-		}()
+		defer db.Close()
 
 		// Test connection
 		if err := db.PingContext(connCtx); err != nil {
@@ -237,11 +233,7 @@ func (r *GrantReconciler) applyGrants(ctx context.Context, host string, port int
 		if err != nil {
 			return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
 		}
-		defer func() {
-			if closeErr := db.Close(); closeErr != nil {
-				// Log error but don't fail - connection may already be closed
-			}
-		}()
+		defer db.Close()
 
 		// Test connection
 		if err := db.PingContext(connCtx); err != nil {

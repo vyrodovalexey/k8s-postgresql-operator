@@ -187,11 +187,7 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 	if err != nil {
 		return fmt.Errorf("failed to open database connection: %w", err)
 	}
-	defer func() {
-		if closeErr := db.Close(); closeErr != nil {
-			// Log error but don't fail - connection may already be closed
-		}
-	}()
+	defer db.Close()
 
 	// Escape database name and owner for SQL identifiers (PostgreSQL uses double quotes)
 	// Replace double quotes with two double quotes to escape them
@@ -231,11 +227,7 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 		if err != nil {
 			return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
 		}
-		defer func() {
-			if closeErr := dbSchema.Close(); closeErr != nil {
-				// Log error but don't fail - connection may already be closed
-			}
-		}()
+		defer db.Close()
 
 		// Escape schema name for SQL identifier
 		escapedSchemaName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(schemaName, `"`, `""`))

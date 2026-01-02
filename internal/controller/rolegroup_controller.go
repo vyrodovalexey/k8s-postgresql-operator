@@ -223,11 +223,7 @@ func (r *RoleGroupReconciler) createOrUpdateRoleGroup(ctx context.Context, host 
 	if err != nil {
 		return fmt.Errorf("failed to query current members: %w", err)
 	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			// Log error but don't fail - rows may already be closed
-		}
-	}()
+	defer rows.Close()
 
 	for rows.Next() {
 		var member string
