@@ -78,7 +78,6 @@ func TestClient_StorePostgresqlUserCredentials_ClientNil(t *testing.T) {
 
 func TestClient_PathConstruction(t *testing.T) {
 	client := &Client{
-		client:          nil,
 		vaultMountPoint: "secret",
 		vaultSecretPath: "pdb",
 	}

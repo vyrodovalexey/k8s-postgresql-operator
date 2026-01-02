@@ -185,7 +185,7 @@ func (r *GrantReconciler) applyGrants(ctx context.Context, host string, port int
 
 	// Escape role name for SQL identifier
 	escapedRole := fmt.Sprintf(`"%s"`, strings.ReplaceAll(roleName, `"`, `""`))
-	escapedDbName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(databaseName, `"`, `""`))
+	escapedDBName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(databaseName, `"`, `""`))
 
 	// Separate database grants from other grants
 	var databaseGrants []instancev1alpha1.GrantItem
@@ -217,7 +217,7 @@ func (r *GrantReconciler) applyGrants(ctx context.Context, host string, port int
 		// Apply database grants
 		for _, grant := range databaseGrants {
 			privilegesStr := strings.Join(grant.Privileges, ", ")
-			query := fmt.Sprintf("GRANT %s ON DATABASE %s TO %s", privilegesStr, escapedDbName, escapedRole)
+			query := fmt.Sprintf("GRANT %s ON DATABASE %s TO %s", privilegesStr, escapedDBName, escapedRole)
 			if _, err := db.ExecContext(connCtx, query); err != nil {
 				return fmt.Errorf("failed to apply database grant: %w", err)
 			}
