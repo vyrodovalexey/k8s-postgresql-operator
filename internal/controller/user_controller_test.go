@@ -364,6 +364,9 @@ func TestUserReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 		},
 	}
 
+	// Note: When PostgreSQL has nil ExternalInstance, findPostgresqlByID won't find it
+	// (because it checks ExternalInstance != nil first), so it will return "not found"
+	// and cause a requeue after 30 seconds.
 	postgresqlList := &instancev1alpha1.PostgresqlList{
 		Items: []instancev1alpha1.Postgresql{
 			{
@@ -372,7 +375,7 @@ func TestUserReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: instancev1alpha1.PostgresqlSpec{
-					ExternalInstance: nil,
+					ExternalInstance: nil, // This means findPostgresqlByID won't find it
 				},
 				Status: instancev1alpha1.PostgresqlStatus{
 					Connected: true,
@@ -401,8 +404,10 @@ func TestUserReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 
 	result, err := reconciler.Reconcile(context.Background(), req)
 
+	// Since PostgreSQL has nil ExternalInstance, findPostgresqlByID won't find it
+	// and will return "not found" error, causing a requeue after 30 seconds
 	assert.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: 30 * time.Second}, result)
 	mockClient.AssertExpectations(t)
 	mockStatusWriter.AssertExpectations(t)
 }

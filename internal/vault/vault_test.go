@@ -91,7 +91,6 @@ func TestClient_PathConstruction(t *testing.T) {
 
 func TestClient_GetPostgresqlCredentials_PathConstruction(t *testing.T) {
 	client := &Client{
-		vaultMountPoint: "secret",
 		vaultSecretPath: "pdb",
 	}
 
@@ -107,7 +106,6 @@ func TestClient_GetPostgresqlCredentials_PathConstruction(t *testing.T) {
 
 func TestClient_GetPostgresqlUserCredentials_PathConstruction(t *testing.T) {
 	client := &Client{
-		vaultMountPoint: "secret",
 		vaultSecretPath: "pdb",
 	}
 
@@ -122,7 +120,6 @@ func TestClient_GetPostgresqlUserCredentials_PathConstruction(t *testing.T) {
 
 func TestClient_StorePostgresqlUserCredentials_PathConstruction(t *testing.T) {
 	client := &Client{
-		vaultMountPoint: "secret",
 		vaultSecretPath: "pdb",
 	}
 
