@@ -11,7 +11,7 @@ spec:
   role: "myapp_readonly"
   
   # Database is the PostgreSQL database name where grants should be applied
-  database: "myapp"
+  database: "mydatabase"
   
   # PostgresqlID is the ID of the PostgreSQL instance where grants should be applied
   # This must match the postgresqlID in the Postgresql CRD

@@ -190,8 +190,8 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 
 	// Escape database name and owner for SQL identifiers (PostgreSQL uses double quotes)
 	// Replace double quotes with two double quotes to escape them
-	escapedDatabaseName := fmt.Sprintf(`"%q"`, strings.ReplaceAll(databaseName, `"`, `""`))
-	escapedOwner := fmt.Sprintf(`"%q"`, strings.ReplaceAll(owner, `"`, `""`))
+	escapedDatabaseName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(databaseName, `"`, `""`))
+	escapedOwner := fmt.Sprintf(`"%s"`, strings.ReplaceAll(owner, `"`, `""`))
 
 	// Check if database exists
 	var exists bool
@@ -229,7 +229,7 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 		defer db.Close()
 
 		// Escape schema name for SQL identifier
-		escapedSchemaName := fmt.Sprintf(`"%q"`, strings.ReplaceAll(schemaName, `"`, `""`))
+		escapedSchemaName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(schemaName, `"`, `""`))
 
 		// Check if schema exists
 		var schemaExists bool
