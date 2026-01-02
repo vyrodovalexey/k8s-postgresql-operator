@@ -200,8 +200,24 @@ func TestGrantValidator_Handle_DuplicateGrant(t *testing.T) {
 		},
 	}
 
+	databaseList := &instancev1alpha1.DatabaseList{
+		Items: []instancev1alpha1.Database{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "db1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.DatabaseSpec{
+					PostgresqlID: postgresqlID,
+					Database:     databaseName,
+				},
+			},
+		},
+	}
+
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Grant")).Return(grant, nil)
 	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(databaseList, nil)
 	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.GrantList"), mock.Anything).Return(grantList, nil)
 
 	response := validator.Handle(context.Background(), req)
@@ -276,8 +292,24 @@ func TestGrantValidator_Handle_NoDuplicate(t *testing.T) {
 		},
 	}
 
+	databaseList := &instancev1alpha1.DatabaseList{
+		Items: []instancev1alpha1.Database{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "db1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.DatabaseSpec{
+					PostgresqlID: postgresqlID,
+					Database:     databaseName,
+				},
+			},
+		},
+	}
+
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Grant")).Return(grant, nil)
 	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(databaseList, nil)
 	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.GrantList"), mock.Anything).Return(grantList, nil)
 
 	response := validator.Handle(context.Background(), req)
@@ -320,9 +352,134 @@ func TestGrantValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Grant")).Return(grant, nil)
 	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
 
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Grant")).Return(grant, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
 	assert.Contains(t, response.Result.Message, "does not exist")
+}
+
+func TestGrantValidator_Handle_DatabaseNotFound(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	validator := &GrantValidator{
+		Client:  mockClient,
+		Decoder: mockDecoder,
+		Log:     logger,
+	}
+
+	postgresqlID := "pg-1"
+	role := "role1"
+	databaseName := "db1"
+
+	grant := &instancev1alpha1.Grant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-grant",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.GrantSpec{
+			PostgresqlID: postgresqlID,
+			Role:         role,
+			Database:     databaseName,
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+					},
+				},
+			},
+		},
+	}
+
+	databaseList := &instancev1alpha1.DatabaseList{
+		Items: []instancev1alpha1.Database{}, // Empty list - database doesn't exist
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Grant")).Return(grant, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(databaseList, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "does not exist")
+	assert.Contains(t, response.Result.Message, databaseName)
+	assert.Contains(t, response.Result.Message, postgresqlID)
+}
+
+func TestGrantValidator_Handle_DatabaseListError(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	validator := &GrantValidator{
+		Client:  mockClient,
+		Decoder: mockDecoder,
+		Log:     logger,
+	}
+
+	postgresqlID := "pg-1"
+	role := "role1"
+	databaseName := "db1"
+
+	grant := &instancev1alpha1.Grant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-grant",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.GrantSpec{
+			PostgresqlID: postgresqlID,
+			Role:         role,
+			Database:     databaseName,
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+					},
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Grant")).Return(grant, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(nil, assert.AnError)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Equal(t, int32(500), response.Result.Code)
 }
 
 func TestGrantValidator_Handle_DecodeError(t *testing.T) {

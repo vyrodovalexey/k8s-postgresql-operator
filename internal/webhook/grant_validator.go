@@ -84,6 +84,28 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 		return admission.Denied(msg)
 	}
 
+	// Verify that the database exists in any namespace for the same postgresqlID
+	databaseList := &instancev1alpha1.DatabaseList{}
+	if err := v.Client.List(ctx, databaseList); err != nil {
+		v.Log.Errorw("Failed to list Database resources", "error", err)
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+
+	databaseExists := false
+	for _, database := range databaseList.Items {
+		if database.Spec.PostgresqlID == postgresqlID &&
+			database.Spec.Database == databaseName {
+			databaseExists = true
+			break
+		}
+	}
+
+	if !databaseExists {
+		msg := fmt.Sprintf("Database %s with postgresqlID %s does not exist in any namespace", databaseName, postgresqlID)
+		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "database", databaseName)
+		return admission.Denied(msg)
+	}
+
 	// List all Grant resources across all namespaces in the cluster
 	grantList := &instancev1alpha1.GrantList{}
 	if err := v.Client.List(ctx, grantList); err != nil {
