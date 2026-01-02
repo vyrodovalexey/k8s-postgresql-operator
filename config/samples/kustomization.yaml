@@ -1,6 +1,0 @@
-## Append samples of your project ##
-resources:
-- postgresql.yaml
-- user.yaml
-- database.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples
