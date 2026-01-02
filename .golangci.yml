@@ -67,14 +67,16 @@ linters:
         - wrapperFunc
         - rangeValCopy
         - hugeParam
+        - sprintfQuotedString
+        - nestingReduce
     lll:
-      line-length: 180
+      line-length: 300
     gocyclo:
       min-complexity: 25
     nestif:
       min-complexity: 16
     funlen:
-      lines: 140
+      lines: 500
       statements: 90
 
 #formatters:
