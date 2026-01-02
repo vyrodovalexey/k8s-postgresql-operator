@@ -69,6 +69,7 @@ linters:
         - hugeParam
         - sprintfQuotedString
         - nestingReduce
+        - paramTypeCombine
     lll:
       line-length: 300
     gocyclo:
