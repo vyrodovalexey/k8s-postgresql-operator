@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"time"
 )
 
 func TestGrantValidator_Handle_NoPostgresqlID(t *testing.T) {
@@ -36,9 +37,14 @@ func TestGrantValidator_Handle_NoPostgresqlID(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	grant := &instancev1alpha1.Grant{
@@ -70,9 +76,14 @@ func TestGrantValidator_Handle_NoRole(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	grant := &instancev1alpha1.Grant{
@@ -105,9 +116,14 @@ func TestGrantValidator_Handle_NoDatabase(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	grant := &instancev1alpha1.Grant{
@@ -141,9 +157,14 @@ func TestGrantValidator_Handle_DuplicateGrant(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "pg-1"
@@ -233,9 +254,14 @@ func TestGrantValidator_Handle_NoDuplicate(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "pg-1"
@@ -322,9 +348,14 @@ func TestGrantValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	grant := &instancev1alpha1.Grant{
@@ -366,9 +397,14 @@ func TestGrantValidator_Handle_DatabaseNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "pg-1"
@@ -430,9 +466,14 @@ func TestGrantValidator_Handle_DatabaseListError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "pg-1"
@@ -488,9 +529,14 @@ func TestGrantValidator_Handle_DecodeError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &GrantValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	req := admission.Request{

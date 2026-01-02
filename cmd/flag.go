@@ -32,6 +32,14 @@ func ConfigParser(cfg *config.Config) {
 		"Name of webhook in k8s for postgresql kind, using to add cabundle")
 	flag.StringVar(&cfg.K8sWebhookNameUser, "k8s-webhook-name-user",
 		cfg.K8sWebhookNameUser, "Name of webhook in k8s for user kind, using to add cabundle")
+	flag.StringVar(&cfg.K8sWebhookNameDatabase, "k8s-webhook-name-database",
+		cfg.K8sWebhookNameDatabase, "Name of webhook in k8s for database kind, using to add cabundle")
+	flag.StringVar(&cfg.K8sWebhookNameGrant, "k8s-webhook-name-grant",
+		cfg.K8sWebhookNameGrant, "Name of webhook in k8s for grant kind, using to add cabundle")
+	flag.StringVar(&cfg.K8sWebhookNameRoleGroup, "k8s-webhook-name-rolegroup",
+		cfg.K8sWebhookNameRoleGroup, "Name of webhook in k8s for rolegroup kind, using to add cabundle")
+	flag.StringVar(&cfg.K8sWebhookNameSchema, "k8s-webhook-name-schema",
+		cfg.K8sWebhookNameSchema, "Name of webhook in k8s for schema kind, using to add cabundle")
 	flag.StringVar(&cfg.VaultAddr, "vault-addr", cfg.VaultAddr, "Vault addr, example http://0.0.0.0:8200")
 	flag.StringVar(&cfg.VaultRole, "vault-role", cfg.VaultRole, "Vault role name")
 	flag.StringVar(&cfg.VaultMountPoint, "vault-mount-point", cfg.VaultMountPoint, "KV V2 Name")
@@ -42,6 +50,14 @@ func ConfigParser(cfg *config.Config) {
 	flag.StringVar(&cfg.ExcludeUserList, "exclude-user-list", cfg.ExcludeUserList,
 		"block creation or changing password for postgresql users list, "+
 			"use comma for delimit users, default 'postgres'")
+	flag.IntVar(&cfg.PostgresqlConnectionRetries, "postgresql-connection-retries",
+		cfg.PostgresqlConnectionRetries, "Number of retries for PostgreSQL connection test (default: 3)")
+	flag.IntVar(&cfg.PostgresqlConnectionTimeoutSecs, "postgresql-connection-timeout-secs",
+		cfg.PostgresqlConnectionTimeoutSecs, "Timeout in seconds between PostgreSQL connection retries (default: 10)")
+	flag.IntVar(&cfg.VaultAvailabilityRetries, "vault-availability-retries",
+		cfg.VaultAvailabilityRetries, "Number of retries for Vault availability check (default: 3)")
+	flag.IntVar(&cfg.VaultAvailabilityRetryDelaySecs, "vault-availability-retry-delay-secs",
+		cfg.VaultAvailabilityRetryDelaySecs, "Delay in seconds between Vault availability retries (default: 10)")
 	flag.Parse() // Парсим флаги командной строки
 
 	// Парсим переменные окружения и сохраняем их в конфигурацию и перезаписывая существующие

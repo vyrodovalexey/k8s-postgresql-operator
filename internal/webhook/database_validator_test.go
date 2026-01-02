@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"time"
 )
 
 const (
@@ -41,9 +42,14 @@ func TestDatabaseValidator_Handle_NoPostgresqlID(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &DatabaseValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	database := &instancev1alpha1.Database{
@@ -75,9 +81,14 @@ func TestDatabaseValidator_Handle_NoDatabaseName(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &DatabaseValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	database := &instancev1alpha1.Database{
@@ -110,9 +121,14 @@ func TestDatabaseValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &DatabaseValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	database := &instancev1alpha1.Database{
@@ -150,9 +166,14 @@ func TestDatabaseValidator_Handle_DuplicateDatabase(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &DatabaseValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := testPostgresqlID
@@ -222,9 +243,14 @@ func TestDatabaseValidator_Handle_NoDuplicate(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &DatabaseValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := testPostgresqlID
@@ -292,9 +318,14 @@ func TestDatabaseValidator_Handle_DecodeError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &DatabaseValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	req := admission.Request{

@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"time"
 )
 
 func TestRoleGroupValidator_Handle_NoPostgresqlID(t *testing.T) {
@@ -36,9 +37,14 @@ func TestRoleGroupValidator_Handle_NoPostgresqlID(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &RoleGroupValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	roleGroup := &instancev1alpha1.RoleGroup{
@@ -70,9 +76,14 @@ func TestRoleGroupValidator_Handle_NoGroupRole(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &RoleGroupValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	roleGroup := &instancev1alpha1.RoleGroup{
@@ -105,9 +116,14 @@ func TestRoleGroupValidator_Handle_DuplicateRoleGroup(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &RoleGroupValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "pg-1"
@@ -177,9 +193,14 @@ func TestRoleGroupValidator_Handle_NoDuplicate(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &RoleGroupValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "pg-1"
@@ -247,9 +268,14 @@ func TestRoleGroupValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &RoleGroupValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	roleGroup := &instancev1alpha1.RoleGroup{
@@ -287,9 +313,14 @@ func TestRoleGroupValidator_Handle_DecodeError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &RoleGroupValidator{
-		Client:  mockClient,
-		Decoder: mockDecoder,
-		Log:     logger,
+		Client:                      mockClient,
+		Decoder:                     mockDecoder,
+		Log:                         logger,
+		VaultClient:                 nil,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	req := admission.Request{

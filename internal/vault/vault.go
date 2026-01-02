@@ -74,6 +74,22 @@ func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath
 	return &Client{client: client, vaultMountPoint: vaultMountPoint, vaultSecretPath: vaultSecretPath}, nil
 }
 
+// CheckHealth checks if Vault is available and healthy
+func (c *Client) CheckHealth(ctx context.Context) error {
+	health, err := c.client.Sys().Health()
+	if err != nil {
+		return fmt.Errorf("failed to check Vault health: %w", err)
+	}
+
+	if health == nil {
+		return fmt.Errorf("Vault health check returned nil")
+	}
+
+	// Health check is successful if we get a response (even if sealed)
+	// Being sealed is a different state than being unavailable
+	return nil
+}
+
 // GetPostgresqlCredentials retrieves PostgreSQL credentials from Vault KV store
 func (c *Client) GetPostgresqlCredentials(ctx context.Context, postgresqlID string) (username, password string, err error) {
 	kv2Path := fmt.Sprintf("%s/%s/admin", c.vaultSecretPath, postgresqlID)

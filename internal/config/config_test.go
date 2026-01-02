@@ -18,6 +18,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -47,6 +48,10 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, defaultK8sTokenPath, cfg.K8sTokenPath)
 	assert.Equal(t, defaultK8SNamespacePath, cfg.K8sNamespacePath)
 	assert.Equal(t, defaultExcludeUserList, cfg.ExcludeUserList)
+	assert.Equal(t, defaultPostgresqlConnectionRetries, cfg.PostgresqlConnectionRetries)
+	assert.Equal(t, defaultPostgresqlConnectionTimeoutSecs, cfg.PostgresqlConnectionTimeoutSecs)
+	assert.Equal(t, defaultVaultAvailabilityRetries, cfg.VaultAvailabilityRetries)
+	assert.Equal(t, defaultVaultAvailabilityRetryDelaySecs, cfg.VaultAvailabilityRetryDelaySecs)
 }
 
 func TestNew_MultipleInstances(t *testing.T) {
@@ -83,4 +88,10 @@ func TestConfig_DefaultValues(t *testing.T) {
 	assert.Equal(t, "/var/run/secrets/kubernetes.io/serviceaccount/token", cfg.K8sTokenPath)
 	assert.Equal(t, "/var/run/secrets/kubernetes.io/serviceaccount/namespace", cfg.K8sNamespacePath)
 	assert.Equal(t, "postgres", cfg.ExcludeUserList)
+	assert.Equal(t, 3, cfg.PostgresqlConnectionRetries)
+	assert.Equal(t, 10, cfg.PostgresqlConnectionTimeoutSecs)
+	assert.Equal(t, 10*time.Second, cfg.PostgresqlConnectionTimeout())
+	assert.Equal(t, 3, cfg.VaultAvailabilityRetries)
+	assert.Equal(t, 10, cfg.VaultAvailabilityRetryDelaySecs)
+	assert.Equal(t, 10*time.Second, cfg.VaultAvailabilityRetryDelay())
 }

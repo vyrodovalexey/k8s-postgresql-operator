@@ -26,14 +26,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	"time"
+
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
 // SchemaValidator validates Schema resources
 type SchemaValidator struct {
-	Client  client.Client
-	Decoder admission.Decoder
-	Log     *zap.SugaredLogger
+	Client                      client.Client
+	Decoder                     admission.Decoder
+	Log                         *zap.SugaredLogger
+	VaultClient                 *vault.Client
+	PostgresqlConnectionRetries int
+	PostgresqlConnectionTimeout time.Duration
+	VaultAvailabilityRetries    int
+	VaultAvailabilityRetryDelay time.Duration
 }
 
 // Handle handles the admission request for Schema resources
@@ -61,6 +69,15 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 
 	v.Log.Infow("Validating Schema resource", "name", schema.Name, "namespace", schema.Namespace, "postgresqlID", postgresqlID, "schema", schemaName)
 
+	// Check Vault availability if Vault client is configured
+	if v.VaultClient != nil {
+		if err := checkVaultAvailability(ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
+			msg := fmt.Sprintf("Vault is not available: %v", err)
+			v.Log.Infow("Validation denied", "reason", msg)
+			return admission.Denied(msg)
+		}
+	}
+
 	// First, verify that the postgresqlID exists in a PostgreSQL CRD object
 	postgresqlList := &instancev1alpha1.PostgresqlList{}
 	if err := v.Client.List(ctx, postgresqlList); err != nil {
@@ -68,18 +85,25 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	postgresqlExists := false
-	for _, postgresql := range postgresqlList.Items {
-		if postgresql.Spec.ExternalInstance != nil &&
-			postgresql.Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			postgresqlExists = true
+	var foundPostgresql *instancev1alpha1.Postgresql
+	for i := range postgresqlList.Items {
+		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
+			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
+			foundPostgresql = &postgresqlList.Items[i]
 			break
 		}
 	}
 
-	if !postgresqlExists {
+	if foundPostgresql == nil {
 		msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s does not exist in the cluster", postgresqlID)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID)
+		return admission.Denied(msg)
+	}
+
+	// Test PostgreSQL connection
+	if err := testPostgreSQLConnection(ctx, foundPostgresql, v.VaultClient, v.Log, v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
+		msg := fmt.Sprintf("Cannot connect to PostgreSQL instance with postgresqlID %s: %v", postgresqlID, err)
+		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "error", err)
 		return admission.Denied(msg)
 	}
 

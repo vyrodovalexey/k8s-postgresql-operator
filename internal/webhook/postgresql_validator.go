@@ -26,14 +26,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	"time"
+
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
 // PostgresqlValidator validates PostgreSQL resources
 type PostgresqlValidator struct {
-	Client  client.Client
-	Decoder admission.Decoder
-	Log     *zap.SugaredLogger
+	Client                      client.Client
+	Decoder                     admission.Decoder
+	Log                         *zap.SugaredLogger
+	VaultClient                 *vault.Client
+	PostgresqlConnectionRetries int
+	PostgresqlConnectionTimeout time.Duration
+	VaultAvailabilityRetries    int
+	VaultAvailabilityRetryDelay time.Duration
 }
 
 // Handle handles the admission request for PostgreSQL resources
@@ -54,6 +62,15 @@ func (v *PostgresqlValidator) Handle(ctx context.Context, req admission.Request)
 	postgresqlID := postgresql.Spec.ExternalInstance.PostgresqlID
 
 	v.Log.Infow("Validating PostgreSQL resource", "name", postgresql.Name, "namespace", postgresql.Namespace, "postgresqlID", postgresqlID)
+
+	// Check Vault availability if Vault client is configured
+	if v.VaultClient != nil {
+		if err := checkVaultAvailability(ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
+			msg := fmt.Sprintf("Vault is not available: %v", err)
+			v.Log.Infow("Validation denied", "reason", msg)
+			return admission.Denied(msg)
+		}
+	}
 
 	// List all PostgreSQL resources across all namespaces in the cluster
 	postgresqlList := &instancev1alpha1.PostgresqlList{}
@@ -81,6 +98,13 @@ func (v *PostgresqlValidator) Handle(ctx context.Context, req admission.Request)
 		}
 	}
 
+	// Test PostgreSQL connection
+	if err := testPostgreSQLConnection(ctx, &postgresql, v.VaultClient, v.Log, v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
+		msg := fmt.Sprintf("Cannot connect to PostgreSQL instance with postgresqlID %s: %v", postgresqlID, err)
+		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "error", err)
+		return admission.Denied(msg)
+	}
+
 	v.Log.Infow("Validation passed", "name", postgresql.Name, "namespace", postgresql.Namespace, "postgresqlID", postgresqlID)
-	return admission.Allowed("No duplicate postgresqlID found in cluster")
+	return admission.Allowed("No duplicate postgresqlID found in cluster and connection test passed")
 }
