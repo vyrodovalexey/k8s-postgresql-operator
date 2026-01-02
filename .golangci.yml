@@ -5,7 +5,7 @@ run:
     - bin
     - hack
     - test
-    - venfor
+    - vendor
   skip-dirs-use-default: true
   skip-files:
     - generate.go
@@ -26,7 +26,6 @@ linters-settings:
       - appendAssign
       - importShadow
       - sloppyReassign
-      - dupImport # https://github.com/go-critic/go-critic/issues/845
       - ifElseChain
       - octalLiteral
       - whyNoLint
@@ -40,7 +39,7 @@ linters-settings:
     statements: 70
 
 linters:
-  disable-all: true
+  default: false
   enable:
     - govet # Vet examines Go source code and reports suspicious constructs, such as Printf calls whose arguments do not align with the format string
     - errcheck # Errcheck is a program for checking for unchecked errors in go programs. These unchecked errors can be critical bugs in some cases
@@ -73,6 +72,12 @@ linters:
     - sqlclosecheck # Checks that sql.Rows and sql.Stmt are closed.
     - gocyclo
     - funlen
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
 issues:
   # Excluding configuration per-path, per-linter, per-text and per-source
   exclude-rules:
