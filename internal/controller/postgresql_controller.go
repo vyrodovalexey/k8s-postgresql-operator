@@ -57,7 +57,6 @@ type PostgresqlReconciler struct {
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;patch;update
 
 func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-
 	// Fetch the Postgresql instance
 	postgresql := &instancev1alpha1.Postgresql{}
 	if err := r.Get(ctx, req.NamespacedName, postgresql); err != nil {
@@ -75,7 +74,6 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.reconcileExternalInstance(ctx, postgresql)
 	}
 
-	// TODO: Handle managed PostgreSQL instance creation
 	// For now, if no external instance is specified, we'll just return
 	r.Log.Info("No external instance specified, managed instance creation not yet implemented")
 	return ctrl.Result{}, nil
@@ -95,20 +93,6 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	// Build connection address
 	connectionAddress := fmt.Sprintf("%s:%d", externalInstance.Address, port)
 	var username, password string
-	// Get credentials - try Vault first if available, otherwise use spec
-	//username := externalInstance.Username
-	//password := externalInstance.Password
-
-	// If Vault client is available and credentials are provided, store them in Vault
-	/*if r.VaultClient != nil && username != "" && password != "" {
-		err := r.VaultClient.StorePostgresqlCredentials(ctx, externalInstance.PostgresqlID, username, password)
-		if err != nil {
-			r.Log.Error(err, "Failed to store credentials in Vault", "postgresqlID", externalInstance.PostgresqlID)
-			// Continue with reconciliation even if Vault storage fails
-		} else {
-			r.Log.Info("Credentials stored in Vault", "postgresqlID", externalInstance.PostgresqlID)
-		}
-	}*/
 
 	// If credentials are not provided in spec, try to get them from Vault
 	if r.VaultClient != nil {

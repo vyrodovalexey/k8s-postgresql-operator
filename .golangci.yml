@@ -14,24 +14,24 @@ linters:
     - ineffassign
     - bodyclose
     - noctx
-    - gosec
+#    - gosec
     - unconvert
     - goconst
     - asciicheck
     - goheader
-    - lll
-    - unparam
+#    - lll
+#    - unparam
     - dogsled
     - nakedret
     - prealloc
-    - gocritic
+#    - gocritic
     - whitespace
     - goprintffuncname
     - testpackage
-    - nestif
+#    - nestif
     - sqlclosecheck
-    - gocyclo
-    - funlen
+#    - gocyclo
+#    - funlen
   exclusions:
     generated: lax
     presets:

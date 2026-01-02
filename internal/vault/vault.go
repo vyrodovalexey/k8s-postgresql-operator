@@ -35,7 +35,6 @@ type Client struct {
 // VAULT_ROLE: Vault role for Kubernetes authentication (required)
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
 func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
-
 	if vaultRole == "" {
 		return nil, fmt.Errorf("VAULT_ROLE environment variable is not set (required for Kubernetes auth)")
 	}
@@ -130,7 +129,6 @@ func (c *Client) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID,
 
 // StorePostgresqlUserCredentials
 func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlID, username, password string) error {
-
 	// Prepare the data to store
 	data := map[string]interface{}{
 		"password": password,
