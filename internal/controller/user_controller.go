@@ -21,14 +21,14 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
-	"go.uber.org/zap"
 	"math/big"
 	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -106,7 +106,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = "require"
+		sslMode = defaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword, dbPassword string

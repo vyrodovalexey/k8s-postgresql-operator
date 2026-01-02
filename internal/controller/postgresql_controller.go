@@ -20,10 +20,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"go.uber.org/zap"
 	"time"
 
 	_ "github.com/lib/pq"
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +34,10 @@ import (
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
+)
+
+const (
+	defaultSSLMode = "require"
 )
 
 // PostgresqlReconciler reconciles a Postgresql object
@@ -125,7 +129,7 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	// Set default SSL mode if not specified
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = "require"
+		sslMode = defaultSSLMode
 	}
 
 	// Set default database if not specified

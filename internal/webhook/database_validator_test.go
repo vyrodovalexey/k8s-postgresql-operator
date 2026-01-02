@@ -30,6 +30,11 @@ import (
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 )
 
+const (
+	testPostgresqlID = "pg-1"
+	testDatabaseName = "db1"
+)
+
 func TestDatabaseValidator_Handle_NoPostgresqlID(t *testing.T) {
 	mockClient := new(MockWebhookClient)
 	mockDecoder := new(MockDecoder)
@@ -150,8 +155,8 @@ func TestDatabaseValidator_Handle_DuplicateDatabase(t *testing.T) {
 		Log:     logger,
 	}
 
-	postgresqlID := "pg-1"
-	databaseName := "db1"
+	postgresqlID := testPostgresqlID
+	databaseName := testDatabaseName
 
 	database := &instancev1alpha1.Database{
 		ObjectMeta: metav1.ObjectMeta{
@@ -222,8 +227,8 @@ func TestDatabaseValidator_Handle_NoDuplicate(t *testing.T) {
 		Log:     logger,
 	}
 
-	postgresqlID := "pg-1"
-	databaseName := "db1"
+	postgresqlID := testPostgresqlID
+	databaseName := testDatabaseName
 
 	database := &instancev1alpha1.Database{
 		ObjectMeta: metav1.ObjectMeta{

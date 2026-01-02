@@ -105,7 +105,7 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = "require"
+		sslMode = defaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword string
@@ -223,7 +223,11 @@ func (r *RoleGroupReconciler) createOrUpdateRoleGroup(ctx context.Context, host 
 	if err != nil {
 		return fmt.Errorf("failed to query current members: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			// Log error but don't fail - rows may already be closed
+		}
+	}()
 
 	for rows.Next() {
 		var member string

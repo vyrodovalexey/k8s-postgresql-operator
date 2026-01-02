@@ -30,6 +30,10 @@ import (
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 )
 
+const (
+	testUsername = "user1"
+)
+
 func TestUserValidator_Handle_NoPostgresqlID(t *testing.T) {
 	mockClient := new(MockWebhookClient)
 	mockDecoder := new(MockDecoder)
@@ -191,7 +195,7 @@ func TestUserValidator_Handle_DuplicateUser(t *testing.T) {
 	}
 
 	postgresqlID := "pg-1"
-	username := "user1"
+	username := testUsername
 
 	user := &instancev1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{
@@ -264,7 +268,7 @@ func TestUserValidator_Handle_NoDuplicate(t *testing.T) {
 	}
 
 	postgresqlID := "pg-1"
-	username := "user1"
+	username := testUsername
 
 	user := &instancev1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{
@@ -335,7 +339,7 @@ func TestUserValidator_Handle_UpdateSameResource(t *testing.T) {
 	}
 
 	postgresqlID := "pg-1"
-	username := "user1"
+	username := testUsername
 
 	user := &instancev1alpha1.User{
 		ObjectMeta: metav1.ObjectMeta{

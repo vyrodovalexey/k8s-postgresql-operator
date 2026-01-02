@@ -73,7 +73,7 @@ func UpdateWebhookConfigurationWithCABundle(secretName, namespace string, config
 	updated := false
 	for i := range webhookConfig.Webhooks {
 		if webhookConfig.Webhooks[i].Name == "postgresql-operator.vyrodovalexey.github.com" {
-			webhookConfig.Webhooks[i].ClientConfig.CABundle = []byte(caBundle)
+			webhookConfig.Webhooks[i].ClientConfig.CABundle = caBundle
 			updated = true
 			break
 		}

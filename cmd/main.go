@@ -114,7 +114,9 @@ func main() {
 		webhookCertPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertName)
 		webhookKeyPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertKey)
 		lg.Infow("Using provided webhook certificates",
-			"webhook-cert-path", cfg.WebhookCertPath, "webhook-cert-name", cfg.WebhookCertName, "webhook-cert-key", cfg.WebhookCertKey)
+			"webhook-cert-path", cfg.WebhookCertPath,
+			"webhook-cert-name", cfg.WebhookCertName,
+			"webhook-cert-key", cfg.WebhookCertKey)
 	} else {
 		// Generate self-signed certificates and store in Kubernetes Secret
 		tempCertDir, err := os.MkdirTemp("", "webhook-certs-")
@@ -133,12 +135,16 @@ func main() {
 
 		// Get Kubernetes config
 		k8sConfig := ctrl.GetConfigOrDie()
-		_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, k8sConfig)
+		_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(
+			cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, k8sConfig)
 		if err != nil {
 			lg.Error(err, "Failed to generate self-signed webhook certificates")
 			os.Exit(1)
 		}
-		lg.Infow("Webhook certificates generated and stored in Secret", "secret-name", secretName, "cert-path", webhookCertPath, "key-path", webhookKeyPath)
+		lg.Infow("Webhook certificates generated and stored in Secret",
+			"secret-name", secretName,
+			"cert-path", webhookCertPath,
+			"key-path", webhookKeyPath)
 
 		// Update all ValidatingWebhookConfigurations with CA bundle from secret
 		webhookNames := []string{
@@ -151,11 +157,16 @@ func main() {
 		}
 
 		for _, webhookName := range webhookNames {
-			if err := k8s.UpdateWebhookConfigurationWithCABundle(secretName, namespace, k8sConfig, webhookName, lg); err != nil {
-				lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName, "webhook-name", webhookName)
+			if err := k8s.UpdateWebhookConfigurationWithCABundle(
+				secretName, namespace, k8sConfig, webhookName, lg); err != nil {
+				lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle",
+					"secret-name", secretName,
+					"webhook-name", webhookName)
 				// Don't exit, as the webhook might still work if the CA bundle is set manually
 			} else {
-				lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle", "secret-name", secretName, "webhook-name", webhookName)
+				lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle",
+					"secret-name", secretName,
+					"webhook-name", webhookName)
 			}
 		}
 	}
@@ -177,7 +188,11 @@ func main() {
 		Port:    cfg.WebhookServerPort,
 		TLSOpts: webhookTLSOpts,
 	})
-	lg.Infow("Webhook server configured", "host", cfg.WebhookServerAddr, "port", cfg.WebhookServerPort, "cert-path", webhookCertPath, "key-path", webhookKeyPath)
+	lg.Infow("Webhook server configured",
+		"host", cfg.WebhookServerAddr,
+		"port", cfg.WebhookServerPort,
+		"cert-path", webhookCertPath,
+		"key-path", webhookKeyPath)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,

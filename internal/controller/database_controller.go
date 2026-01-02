@@ -105,7 +105,7 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = "require"
+		sslMode = defaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword string
@@ -187,7 +187,11 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 	if err != nil {
 		return fmt.Errorf("failed to open database connection: %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			// Log error but don't fail - connection may already be closed
+		}
+	}()
 
 	// Escape database name and owner for SQL identifiers (PostgreSQL uses double quotes)
 	// Replace double quotes with two double quotes to escape them
@@ -227,7 +231,11 @@ func (r *DatabaseReconciler) createOrUpdateDatabase(ctx context.Context, host st
 		if err != nil {
 			return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
 		}
-		defer dbSchema.Close()
+		defer func() {
+			if closeErr := dbSchema.Close(); closeErr != nil {
+				// Log error but don't fail - connection may already be closed
+			}
+		}()
 
 		// Escape schema name for SQL identifier
 		escapedSchemaName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(schemaName, `"`, `""`))

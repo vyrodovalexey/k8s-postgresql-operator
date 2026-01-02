@@ -177,8 +177,8 @@ func (m *MockDecoder) Decode(req admission.Request, into runtime.Object) error {
 				*target = *rg
 			}
 		case *instancev1alpha1.Schema:
-			if schema, ok := args.Get(0).(*instancev1alpha1.Schema); ok {
-				*target = *schema
+			if schemaObj, ok := args.Get(0).(*instancev1alpha1.Schema); ok {
+				*target = *schemaObj
 			}
 		}
 	}

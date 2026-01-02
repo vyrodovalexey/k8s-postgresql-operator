@@ -34,9 +34,9 @@ type Collector struct {
 }
 
 // NewCollector creates a new metrics collector
-func NewCollector(client client.Client, log *zap.SugaredLogger) *Collector {
+func NewCollector(c client.Client, log *zap.SugaredLogger) *Collector {
 	return &Collector{
-		Client: client,
+		Client: c,
 		Log:    log,
 	}
 }

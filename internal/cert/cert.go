@@ -67,7 +67,11 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 				if err != nil {
 					return "", "", "", fmt.Errorf("failed to create cert file: %w", err)
 				}
-				defer certFile.Close()
+				defer func() {
+					if closeErr := certFile.Close(); closeErr != nil {
+						// Log error but don't fail - file may already be closed
+					}
+				}()
 				if _, err := certFile.Write(certData); err != nil {
 					return "", "", "", fmt.Errorf("failed to write certificate: %w", err)
 				}
@@ -77,7 +81,11 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 				if err != nil {
 					return "", "", "", fmt.Errorf("failed to create key file: %w", err)
 				}
-				defer keyFile.Close()
+				defer func() {
+					if closeErr := keyFile.Close(); closeErr != nil {
+						// Log error but don't fail - file may already be closed
+					}
+				}()
 				if _, err := keyFile.Write(keyData); err != nil {
 					return "", "", "", fmt.Errorf("failed to write private key: %w", err)
 				}
@@ -160,7 +168,11 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to create cert file: %w", err)
 	}
-	defer certFile.Close()
+	defer func() {
+		if closeErr := certFile.Close(); closeErr != nil {
+			// Log error but don't fail - file may already be closed
+		}
+	}()
 
 	if _, err := certFile.Write(certPEM); err != nil {
 		return "", "", "", fmt.Errorf("failed to write certificate: %w", err)
@@ -171,7 +183,11 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to create key file: %w", err)
 	}
-	defer keyFile.Close()
+	defer func() {
+		if closeErr := keyFile.Close(); closeErr != nil {
+			// Log error but don't fail - file may already be closed
+		}
+	}()
 
 	if _, err := keyFile.Write(keyPEM); err != nil {
 		return "", "", "", fmt.Errorf("failed to write private key: %w", err)

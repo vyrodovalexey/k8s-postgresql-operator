@@ -32,17 +32,22 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	testNamespace     = "test-namespace"
+	testWebhookConfig = "test-webhook-config"
+)
+
 func TestGetCurrentNamespace_WithValidFile(t *testing.T) {
 	// Create a temporary file with namespace content
 	tmpDir := t.TempDir()
 	namespaceFile := filepath.Join(tmpDir, "namespace")
-	testNamespace := "test-namespace"
+	namespace := testNamespace
 
 	err := os.WriteFile(namespaceFile, []byte(testNamespace), 0644)
 	require.NoError(t, err)
 
 	result := GetCurrentNamespace(namespaceFile)
-	assert.Equal(t, testNamespace, result)
+	assert.Equal(t, namespace, result)
 }
 
 func TestGetCurrentNamespace_WithWhitespace(t *testing.T) {
@@ -90,7 +95,7 @@ func TestUpdateWebhookConfigurationWithCABundle_Success(t *testing.T) {
 
 	// Create a secret with CA bundle
 	secretName := "test-secret"
-	namespace := "test-namespace"
+	namespace := testNamespace
 	caBundle := []byte("test-ca-bundle")
 
 	secret := &corev1.Secret{
@@ -107,7 +112,7 @@ func TestUpdateWebhookConfigurationWithCABundle_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a ValidatingWebhookConfiguration
-	webhookConfigName := "test-webhook-config"
+	webhookConfigName := testWebhookConfig
 	webhookConfig := &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: webhookConfigName,
@@ -149,8 +154,8 @@ func TestUpdateWebhookConfigurationWithCABundle_SecretNotFound(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	secretName := "nonexistent-secret"
-	namespace := "test-namespace"
-	webhookConfigName := "test-webhook-config"
+	namespace := testNamespace
+	webhookConfigName := testWebhookConfig
 
 	// Create webhook config but no secret
 	webhookConfig := &admissionregistrationv1.ValidatingWebhookConfiguration{
@@ -179,7 +184,7 @@ func TestUpdateWebhookConfigurationWithCABundle_MissingCABundle(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	secretName := "test-secret"
-	namespace := "test-namespace"
+	namespace := testNamespace
 
 	// Create secret without tls.crt
 	secret := &corev1.Secret{
@@ -195,7 +200,7 @@ func TestUpdateWebhookConfigurationWithCABundle_MissingCABundle(t *testing.T) {
 	_, err := clientset.CoreV1().Secrets(namespace).Create(context.Background(), secret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	webhookConfigName := "test-webhook-config"
+	webhookConfigName := testWebhookConfig
 	webhookConfig := &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: webhookConfigName,
