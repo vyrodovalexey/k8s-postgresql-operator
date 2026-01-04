@@ -19,13 +19,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/logging"
 	"go.uber.org/zap/zapcore"
@@ -47,11 +44,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller"
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
-	webhookpkg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -66,7 +60,7 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// nolint:gocyclo
+// nolint:gocyclo // main function orchestrates multiple setup steps which requires complex control flow
 func main() {
 	// Создаем новый экземпляр конфигурации
 	cfg := config.New()
@@ -107,69 +101,10 @@ func main() {
 	// Initial webhook TLS options
 	webhookTLSOpts := tlsOpts
 
-	// Generate or use provided webhook certificates
-	var webhookCertPath, webhookKeyPath string
-	if cfg.WebhookCertPath != "" {
-		// Use provided certificates
-		webhookCertPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertName)
-		webhookKeyPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertKey)
-		lg.Infow("Using provided webhook certificates",
-			"webhook-cert-path", cfg.WebhookCertPath,
-			"webhook-cert-name", cfg.WebhookCertName,
-			"webhook-cert-key", cfg.WebhookCertKey)
-	} else {
-		// Generate self-signed certificates and store in Kubernetes Secret
-		tempCertDir, err := os.MkdirTemp("", "webhook-certs-")
-		if err != nil {
-			lg.Error(err, "Failed to create temporary directory for webhook certificates")
-			os.Exit(1)
-		}
-		lg.Infow("Generating self-signed webhook certificates and storing in Secret", "cert-dir", tempCertDir)
-
-		// Get service name from environment or use default
-
-		// Discover current namespace
-		namespace := k8s.GetCurrentNamespace(cfg.K8sNamespacePath)
-
-		secretName := fmt.Sprintf("%s-webhook-cert", cfg.WebhookK8sServiceName)
-
-		// Get Kubernetes config
-		k8sConfig := ctrl.GetConfigOrDie()
-		_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(
-			cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, k8sConfig)
-		if err != nil {
-			lg.Error(err, "Failed to generate self-signed webhook certificates")
-			os.Exit(1)
-		}
-		lg.Infow("Webhook certificates generated and stored in Secret",
-			"secret-name", secretName,
-			"cert-path", webhookCertPath,
-			"key-path", webhookKeyPath)
-
-		// Update all ValidatingWebhookConfigurations with CA bundle from secret
-		webhookNames := []string{
-			cfg.K8sWebhookNamePostgresql,
-			cfg.K8sWebhookNameUser,
-			cfg.K8sWebhookNameDatabase,
-			cfg.K8sWebhookNameGrant,
-			cfg.K8sWebhookNameRoleGroup,
-			cfg.K8sWebhookNameSchema,
-		}
-
-		for _, webhookName := range webhookNames {
-			if err := k8s.UpdateWebhookConfigurationWithCABundle(
-				secretName, namespace, k8sConfig, webhookName, lg); err != nil {
-				lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle",
-					"secret-name", secretName,
-					"webhook-name", webhookName)
-				// Don't exit, as the webhook might still work if the CA bundle is set manually
-			} else {
-				lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle",
-					"secret-name", secretName,
-					"webhook-name", webhookName)
-			}
-		}
-	}
+	// Define webhooks
+	webhookNames := cfg.SetupWebhooksList()
+	// Setup webhook certificates
+	webhookCertPath, webhookKeyPath := setupWebhookCertificates(cfg, webhookNames, lg)
 
 	// Initialize webhook certificate watcher
 	var err error
@@ -234,85 +169,9 @@ func main() {
 	}
 
 	// Setup all controllers
-	type controllerSetup struct {
-		name  string
-		setup func() error
-	}
-
-	controllerSetups := []controllerSetup{
-		{
-			name: "Postgresql",
-			setup: func() error {
-				return (&controller.PostgresqlReconciler{
-					Client:      mgr.GetClient(),
-					Scheme:      mgr.GetScheme(),
-					VaultClient: vaultClient,
-					Log:         lg,
-				}).SetupWithManager(mgr)
-			},
-		},
-		{
-			name: "User",
-			setup: func() error {
-				return (&controller.UserReconciler{
-					Client:      mgr.GetClient(),
-					Scheme:      mgr.GetScheme(),
-					VaultClient: vaultClient,
-					Log:         lg,
-				}).SetupWithManager(mgr)
-			},
-		},
-		{
-			name: "Database",
-			setup: func() error {
-				return (&controller.DatabaseReconciler{
-					Client:      mgr.GetClient(),
-					Scheme:      mgr.GetScheme(),
-					VaultClient: vaultClient,
-					Log:         lg,
-				}).SetupWithManager(mgr)
-			},
-		},
-		{
-			name: "Grant",
-			setup: func() error {
-				return (&controller.GrantReconciler{
-					Client:      mgr.GetClient(),
-					Scheme:      mgr.GetScheme(),
-					VaultClient: vaultClient,
-					Log:         lg,
-				}).SetupWithManager(mgr)
-			},
-		},
-		{
-			name: "RoleGroup",
-			setup: func() error {
-				return (&controller.RoleGroupReconciler{
-					Client:      mgr.GetClient(),
-					Scheme:      mgr.GetScheme(),
-					VaultClient: vaultClient,
-					Log:         lg,
-				}).SetupWithManager(mgr)
-			},
-		},
-		{
-			name: "Schema",
-			setup: func() error {
-				return (&controller.SchemaReconciler{
-					Client:      mgr.GetClient(),
-					Scheme:      mgr.GetScheme(),
-					VaultClient: vaultClient,
-					Log:         lg,
-				}).SetupWithManager(mgr)
-			},
-		},
-	}
-
-	for _, ctrlSetup := range controllerSetups {
-		if err := ctrlSetup.setup(); err != nil {
-			lg.Error(err, "unable to create controller", "controller", ctrlSetup.name)
-			os.Exit(1)
-		}
+	if err := setupControllers(mgr, cfg, vaultClient, lg); err != nil {
+		lg.Error(err, "unable to setup controllers")
+		os.Exit(1)
 	}
 
 	// +kubebuilder:scaffold:builder
@@ -347,109 +206,9 @@ func main() {
 		lg.Infow("Exclude user list configured", "users", excludeUserList)
 	}
 
-	// Define webhook registration configs
-	type webhookConfig struct {
-		path    string
-		handler admission.Handler
-		name    string
-	}
-
-	webhookConfigs := []webhookConfig{
-		{
-			path: "/uservalidate",
-			handler: &webhookpkg.UserValidator{
-				Client:                      mgr.GetClient(),
-				Decoder:                     webhookDecoder,
-				Log:                         lg,
-				ExcludeUserList:             excludeUserList,
-				VaultClient:                 vaultClient,
-				PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
-				PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
-				VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
-				VaultAvailabilityRetryDelay: cfg.VaultAvailabilityRetryDelay(),
-			},
-			name: "uservalidate",
-		},
-		{
-			path: "/postgresqlvalidate",
-			handler: &webhookpkg.PostgresqlValidator{
-				Client:                      mgr.GetClient(),
-				Decoder:                     webhookDecoder,
-				Log:                         lg,
-				VaultClient:                 vaultClient,
-				PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
-				PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
-				VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
-				VaultAvailabilityRetryDelay: cfg.VaultAvailabilityRetryDelay(),
-			},
-			name: "postgresqlvalidate",
-		},
-		{
-			path: "/databasevalidate",
-			handler: &webhookpkg.DatabaseValidator{
-				Client:                      mgr.GetClient(),
-				Decoder:                     webhookDecoder,
-				Log:                         lg,
-				VaultClient:                 vaultClient,
-				PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
-				PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
-				VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
-				VaultAvailabilityRetryDelay: cfg.VaultAvailabilityRetryDelay(),
-			},
-			name: "databasevalidate",
-		},
-		{
-			path: "/grantvalidate",
-			handler: &webhookpkg.GrantValidator{
-				Client:                      mgr.GetClient(),
-				Decoder:                     webhookDecoder,
-				Log:                         lg,
-				VaultClient:                 vaultClient,
-				PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
-				PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
-				VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
-				VaultAvailabilityRetryDelay: cfg.VaultAvailabilityRetryDelay(),
-			},
-			name: "grantvalidate",
-		},
-		{
-			path: "/rolegroupvalidate",
-			handler: &webhookpkg.RoleGroupValidator{
-				Client:                      mgr.GetClient(),
-				Decoder:                     webhookDecoder,
-				Log:                         lg,
-				VaultClient:                 vaultClient,
-				PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
-				PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
-				VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
-				VaultAvailabilityRetryDelay: cfg.VaultAvailabilityRetryDelay(),
-			},
-			name: "rolegroupvalidate",
-		},
-		{
-			path: "/schemavalidate",
-			handler: &webhookpkg.SchemaValidator{
-				Client:                      mgr.GetClient(),
-				Decoder:                     webhookDecoder,
-				Log:                         lg,
-				VaultClient:                 vaultClient,
-				PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
-				PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
-				VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
-				VaultAvailabilityRetryDelay: cfg.VaultAvailabilityRetryDelay(),
-			},
-			name: "schemavalidate",
-		},
-	}
-
-	// Register all webhook handlers
-	for _, cfg := range webhookConfigs {
-		webhookServer.Register(cfg.path, &webhook.Admission{Handler: cfg.handler})
-		lg.Infow("Registered webhook handler", "path", cfg.path, "name", cfg.name)
-	}
-
-	if err := mgr.Add(webhookServer); err != nil {
-		lg.Error(err, "unable to set up webhook server")
+	// Register webhooks
+	if err := registerWebhooks(mgr, webhookServer, webhookDecoder, cfg, vaultClient, excludeUserList, lg); err != nil {
+		lg.Error(err, "unable to register webhooks")
 		os.Exit(1)
 	}
 

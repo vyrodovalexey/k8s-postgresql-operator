@@ -19,6 +19,7 @@ package vault
 import (
 	"context"
 	"fmt"
+
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
 )
@@ -36,7 +37,7 @@ type Client struct {
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
 func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
 	if vaultRole == "" {
-		return nil, fmt.Errorf("VAULT_ROLE environment variable is not set (required for Kubernetes auth)")
+		return nil, fmt.Errorf("environment variable VAULT_ROLE is not set (required for Kubernetes auth)")
 	}
 
 	config := api.DefaultConfig()
@@ -45,11 +46,6 @@ func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath
 	client, err := api.NewClient(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Vault client: %w", err)
-	}
-
-	if tokenPath == "" {
-		// Default to the standard Kubernetes service account token path
-		tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	}
 
 	// Create Kubernetes auth method
@@ -82,7 +78,7 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	}
 
 	if health == nil {
-		return fmt.Errorf("Vault health check returned nil")
+		return fmt.Errorf("vault health check returned nil")
 	}
 
 	// Health check is successful if we get a response (even if sealed)
@@ -91,7 +87,8 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 }
 
 // GetPostgresqlCredentials retrieves PostgreSQL credentials from Vault KV store
-func (c *Client) GetPostgresqlCredentials(ctx context.Context, postgresqlID string) (username, password string, err error) {
+func (c *Client) GetPostgresqlCredentials(
+	ctx context.Context, postgresqlID string) (username, password string, err error) {
 	kv2Path := fmt.Sprintf("%s/%s/admin", c.vaultSecretPath, postgresqlID)
 
 	// Use KVv2 to read the secret
@@ -119,7 +116,8 @@ func (c *Client) GetPostgresqlCredentials(ctx context.Context, postgresqlID stri
 }
 
 // GetPostgresqlUserCredentials retrieves PostgreSQL credentials from Vault KV store
-func (c *Client) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID, username string) (password string, err error) {
+func (c *Client) GetPostgresqlUserCredentials(
+	ctx context.Context, postgresqlID, username string) (password string, err error) {
 	kv2Path := fmt.Sprintf("%s/%s/%s", c.vaultSecretPath, postgresqlID, username)
 
 	// Use KVv2 to read the secret

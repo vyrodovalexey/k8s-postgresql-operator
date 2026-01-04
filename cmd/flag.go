@@ -10,7 +10,6 @@ import (
 )
 
 func ConfigParser(cfg *config.Config) {
-
 	flag.StringVar(&cfg.ProbeAddr, "health-probe-bind-address", cfg.ProbeAddr, "The address the probe endpoint binds to.")
 	flag.BoolVar(&cfg.EnableLeaderElection, "leader-elect", cfg.EnableLeaderElection,
 		"Enable leader election for controller manager. "+
@@ -64,7 +63,6 @@ func ConfigParser(cfg *config.Config) {
 	err := env.Parse(cfg)
 
 	if err != nil {
-
 		log.Printf("can't parse ENV: %v", err)
 	}
 }

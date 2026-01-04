@@ -49,14 +49,10 @@ rules:
   - postgresql-operator.vyrodovalexey.github.com
   resources:
   - databases
-  - grants
-  - postgresqls
-  - rolegroups
-  - schemas
-  - users
   verbs:
   - get
   - list
+  - update
   - watch
 - apiGroups:
   - postgresql-operator.vyrodovalexey.github.com
@@ -82,3 +78,15 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - postgresql-operator.vyrodovalexey.github.com
+  resources:
+  - grants
+  - postgresqls
+  - rolegroups
+  - schemas
+  - users
+  verbs:
+  - get
+  - list
+  - watch

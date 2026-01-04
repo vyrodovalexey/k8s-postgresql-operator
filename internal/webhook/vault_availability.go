@@ -27,9 +27,11 @@ import (
 )
 
 // checkVaultAvailability checks if Vault is available with retry logic
-func checkVaultAvailability(ctx context.Context, vaultClient *vault.Client, log *zap.SugaredLogger, retries int, retryDelay time.Duration) error {
+func checkVaultAvailability(
+	ctx context.Context, vaultClient *vault.Client, log *zap.SugaredLogger,
+	retries int, retryDelay time.Duration) error {
 	if vaultClient == nil {
-		return fmt.Errorf("Vault client is not configured")
+		return fmt.Errorf("vault client is not configured")
 	}
 
 	var lastErr error
@@ -39,7 +41,7 @@ func checkVaultAvailability(ctx context.Context, vaultClient *vault.Client, log 
 		// Use the vault client's health check method
 		err := vaultClient.CheckHealth(ctx)
 		if err != nil {
-			lastErr = fmt.Errorf("Vault health check failed: %w", err)
+			lastErr = fmt.Errorf("vault health check failed: %w", err)
 			log.Warnw("Vault availability check failed", "attempt", attempt, "error", lastErr)
 			if attempt < retries {
 				log.Debugw("Retrying Vault availability check", "attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
@@ -54,5 +56,5 @@ func checkVaultAvailability(ctx context.Context, vaultClient *vault.Client, log 
 	}
 
 	// All retries failed
-	return fmt.Errorf("Vault is not available after %d attempts: %w", retries, lastErr)
+	return fmt.Errorf("vault is not available after %d attempts: %w", retries, lastErr)
 }

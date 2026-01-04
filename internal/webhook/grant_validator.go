@@ -29,6 +29,7 @@ import (
 	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -68,11 +69,14 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 	role := grant.Spec.Role
 	databaseName := grant.Spec.Database
 
-	v.Log.Infow("Validating Grant resource", "name", grant.Name, "namespace", grant.Namespace, "postgresqlID", postgresqlID, "role", role, "database", databaseName)
+	v.Log.Infow("Validating Grant resource",
+		"name", grant.Name, "namespace", grant.Namespace, "postgresqlID", postgresqlID,
+		"role", role, "database", databaseName)
 
 	// Check Vault availability if Vault client is configured
 	if v.VaultClient != nil {
-		if err := checkVaultAvailability(ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
+		if err := checkVaultAvailability(
+			ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
 			msg := fmt.Sprintf("Vault is not available: %v", err)
 			v.Log.Infow("Validation denied", "reason", msg)
 			return admission.Denied(msg)
@@ -80,48 +84,27 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 	}
 
 	// First, verify that the postgresqlID exists in a PostgreSQL CRD object
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := v.Client.List(ctx, postgresqlList); err != nil {
-		v.Log.Errorw("Failed to list PostgreSQL resources", "error", err)
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	var foundPostgresql *instancev1alpha1.Postgresql
-	for i := range postgresqlList.Items {
-		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
-			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			foundPostgresql = &postgresqlList.Items[i]
-			break
-		}
-	}
-
-	if foundPostgresql == nil {
+	foundPostgresql, err := k8sclient.FindPostgresqlByID(ctx, v.Client, postgresqlID)
+	if err != nil {
 		msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s does not exist in the cluster", postgresqlID)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID)
 		return admission.Denied(msg)
 	}
 
 	// Test PostgreSQL connection
-	if err := testPostgreSQLConnection(ctx, foundPostgresql, v.VaultClient, v.Log, v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
+	if err := testPostgreSQLConnection(
+		ctx, foundPostgresql, v.VaultClient, v.Log,
+		v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
 		msg := fmt.Sprintf("Cannot connect to PostgreSQL instance with postgresqlID %s: %v", postgresqlID, err)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "error", err)
 		return admission.Denied(msg)
 	}
 
 	// Verify that the database exists in any namespace for the same postgresqlID
-	databaseList := &instancev1alpha1.DatabaseList{}
-	if err := v.Client.List(ctx, databaseList); err != nil {
-		v.Log.Errorw("Failed to list Database resources", "error", err)
+	databaseExists, err := k8sclient.DatabaseExistsByPostgresqlIDAndName(ctx, v.Client, postgresqlID, databaseName)
+	if err != nil {
+		v.Log.Errorw("Failed to check Database existence", "error", err)
 		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	databaseExists := false
-	for _, database := range databaseList.Items {
-		if database.Spec.PostgresqlID == postgresqlID &&
-			database.Spec.Database == databaseName {
-			databaseExists = true
-			break
-		}
 	}
 
 	if !databaseExists {
@@ -130,33 +113,24 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 		return admission.Denied(msg)
 	}
 
-	// List all Grant resources across all namespaces in the cluster
-	grantList := &instancev1alpha1.GrantList{}
-	if err := v.Client.List(ctx, grantList); err != nil {
-		v.Log.Errorw("Failed to list Grant resources", "error", err)
+	// Check for duplicate postgresqlID + role + database combination across the entire cluster
+	duplicateResult, err := k8sclient.CheckDuplicateGrant(
+		ctx, v.Client, grant.Name, grant.Namespace, postgresqlID, role, databaseName,
+		req.Operation == admissionv1.Update)
+	if err != nil {
+		v.Log.Errorw("Failed to check for duplicate Grant", "error", err)
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	// Check for duplicate postgresqlID + role + database combination across the entire cluster
-	for _, existingGrant := range grantList.Items {
-		// Skip the current resource if this is an update
-		if req.Operation == admissionv1.Update &&
-			existingGrant.Name == grant.Name &&
-			existingGrant.Namespace == grant.Namespace {
-			continue
-		}
-
-		if existingGrant.Spec.PostgresqlID == postgresqlID &&
-			existingGrant.Spec.Role == role &&
-			existingGrant.Spec.Database == databaseName {
-			msg := fmt.Sprintf("Grant with postgresqlID %s, role %s, and database %s already exists in namespace %s (instance: %s)",
-				postgresqlID, role, databaseName, existingGrant.Namespace, existingGrant.Name)
-			v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "role", role, "database", databaseName,
-				"existing-namespace", existingGrant.Namespace, "existing-name", existingGrant.Name)
-			return admission.Denied(msg)
-		}
+	if duplicateResult.Found {
+		v.Log.Infow("Validation denied",
+			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "role", role, "database", databaseName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+		return admission.Denied(duplicateResult.Message)
 	}
 
-	v.Log.Infow("Validation passed", "name", grant.Name, "namespace", grant.Namespace, "postgresqlID", postgresqlID, "role", role, "database", databaseName)
+	v.Log.Infow("Validation passed",
+		"name", grant.Name, "namespace", grant.Namespace, "postgresqlID", postgresqlID,
+		"role", role, "database", databaseName)
 	return admission.Allowed("No duplicate postgresqlID, role, and database combination found in cluster")
 }

@@ -3,24 +3,25 @@ package config
 import "time"
 
 const (
-	defaultWebhookCertPath                 = ""
-	defaultWebhookCertName                 = "tls.crt"
-	defaultWebhookCertKey                  = "tls.key"
-	defaultWebhookServerPort               = 8443
-	defaultWebhookServerAddr               = "0.0.0.0"
-	defaultWebhookK8sServiceName           = "k8s-postgresql-operator-controller-service"
-	defaultK8sWebhookNamePostgresql        = "k8s-postgresql-operator-validating-webhook-postgresql"
-	defaultK8sWebhookNameUser              = "k8s-postgresql-operator-validating-webhook-user"
-	defaultK8sWebhookNameDatabase          = "k8s-postgresql-operator-validating-webhook-database"
-	defaultK8sWebhookNameGrant             = "k8s-postgresql-operator-validating-webhook-grant"
-	defaultK8sWebhookNameRoleGroup         = "k8s-postgresql-operator-validating-webhook-rolegroup"
-	defaultK8sWebhookNameSchema            = "k8s-postgresql-operator-validating-webhook-schema"
-	defaultEnableLeaderElection            = false
-	defaultProbeAddr                       = ":8081"
-	defaultVaultAddr                       = "http://0.0.0.0:8200"
-	defaultVaultRole                       = "role"
-	defaultVaultMountPoint                 = "secret"
-	defaultVaultSecretPath                 = "pdb"
+	defaultWebhookCertPath          = ""
+	defaultWebhookCertName          = "tls.crt"
+	defaultWebhookCertKey           = "tls.key"
+	defaultWebhookServerPort        = 8443
+	defaultWebhookServerAddr        = "0.0.0.0"
+	defaultWebhookK8sServiceName    = "k8s-postgresql-operator-controller-service"
+	defaultK8sWebhookNamePostgresql = "k8s-postgresql-operator-validating-webhook-postgresql"
+	defaultK8sWebhookNameUser       = "k8s-postgresql-operator-validating-webhook-user"
+	defaultK8sWebhookNameDatabase   = "k8s-postgresql-operator-validating-webhook-database"
+	defaultK8sWebhookNameGrant      = "k8s-postgresql-operator-validating-webhook-grant"
+	defaultK8sWebhookNameRoleGroup  = "k8s-postgresql-operator-validating-webhook-rolegroup"
+	defaultK8sWebhookNameSchema     = "k8s-postgresql-operator-validating-webhook-schema"
+	defaultEnableLeaderElection     = false
+	defaultProbeAddr                = ":8081"
+	defaultVaultAddr                = "http://0.0.0.0:8200"
+	defaultVaultRole                = "role"
+	defaultVaultMountPoint          = "secret"
+	defaultVaultSecretPath          = "pdb"
+	//nolint:gosec // default k8s token path
 	defaultK8sTokenPath                    = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	defaultK8SNamespacePath                = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 	defaultExcludeUserList                 = "postgres"
@@ -98,4 +99,15 @@ func (c *Config) PostgresqlConnectionTimeout() time.Duration {
 // VaultAvailabilityRetryDelay returns the delay duration for Vault availability retries
 func (c *Config) VaultAvailabilityRetryDelay() time.Duration {
 	return time.Duration(c.VaultAvailabilityRetryDelaySecs) * time.Second
+}
+
+func (c *Config) SetupWebhooksList() []string {
+	return []string{
+		c.K8sWebhookNamePostgresql,
+		c.K8sWebhookNameUser,
+		c.K8sWebhookNameDatabase,
+		c.K8sWebhookNameGrant,
+		c.K8sWebhookNameRoleGroup,
+		c.K8sWebhookNameSchema,
+	}
 }

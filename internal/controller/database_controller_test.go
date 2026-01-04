@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -30,6 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 )
 
 func TestDatabaseReconciler_Reconcile_NotFound(t *testing.T) {
@@ -37,8 +39,12 @@ func TestDatabaseReconciler_Reconcile_NotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &DatabaseReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	req := ctrl.Request{
@@ -62,8 +68,12 @@ func TestDatabaseReconciler_FindPostgresqlByID_Success(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &DatabaseReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "test-id-123"
@@ -93,7 +103,7 @@ func TestDatabaseReconciler_FindPostgresqlByID_Success(t *testing.T) {
 		*list = *postgresqlList
 	})
 
-	result, err := reconciler.findPostgresqlByID(context.Background(), postgresqlID)
+	result, err := k8sclient.FindPostgresqlByID(context.Background(), reconciler.Client, postgresqlID)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)

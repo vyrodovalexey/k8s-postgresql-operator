@@ -39,9 +39,11 @@ import (
 
 // GenerateSelfSignedCertAndStoreInSecret generates a self-signed certificate and stores it in a Kubernetes Secret
 // Returns the secret name and paths to the certificate and key files
-func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, certDir string, config *rest.Config) (secretNameOut string, certPath, keyPath string, err error) {
+func GenerateSelfSignedCertAndStoreInSecret(
+	serviceName, namespace, secretName, certDir string, config *rest.Config) (
+	secretNameOut string, certPath, keyPath string, err error) {
 	// Create cert directory if it doesn't exist
-	if err := os.MkdirAll(certDir, 0755); err != nil {
+	if err := os.MkdirAll(certDir, 0o750); err != nil {
 		return "", "", "", fmt.Errorf("failed to create cert directory: %w", err)
 	}
 
@@ -63,7 +65,7 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 		if certData, ok := secret.Data["tls.crt"]; ok {
 			if keyData, ok := secret.Data["tls.key"]; ok {
 				// Write certificate to file
-				certFile, err := os.Create(certPath)
+				certFile, err := os.Create(certPath) //nolint:gosec  //microservices approach
 				if err != nil {
 					return "", "", "", fmt.Errorf("failed to create cert file: %w", err)
 				}
@@ -73,7 +75,7 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 				}
 
 				// Write private key to file
-				keyFile, err := os.Create(keyPath)
+				keyFile, err := os.Create(keyPath) //nolint:gosec // microservices approach
 				if err != nil {
 					return "", "", "", fmt.Errorf("failed to create key file: %w", err)
 				}
@@ -156,7 +158,7 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 	}
 
 	// Write certificate to file
-	certFile, err := os.Create(certPath)
+	certFile, err := os.Create(certPath) //nolint:gosec // microservices approach
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to create cert file: %w", err)
 	}
@@ -167,7 +169,7 @@ func GenerateSelfSignedCertAndStoreInSecret(serviceName, namespace, secretName, 
 	}
 
 	// Write private key to file
-	keyFile, err := os.Create(keyPath)
+	keyFile, err := os.Create(keyPath) //nolint:gosec // microservices approach
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to create key file: %w", err)
 	}

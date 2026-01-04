@@ -29,6 +29,7 @@ import (
 	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -65,11 +66,13 @@ func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admis
 	postgresqlID := user.Spec.PostgresqlID
 	username := user.Spec.Username
 
-	v.Log.Infow("Validating User resource", "name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
+	v.Log.Infow("Validating User resource",
+		"name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
 
 	// Check Vault availability if Vault client is configured
 	if v.VaultClient != nil {
-		if err := checkVaultAvailability(ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
+		if err := checkVaultAvailability(
+			ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
 			msg := fmt.Sprintf("Vault is not available: %v", err)
 			v.Log.Infow("Validation denied", "reason", msg)
 			return admission.Denied(msg)
@@ -86,60 +89,39 @@ func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admis
 	}
 
 	// First, verify that the postgresqlID exists in a PostgreSQL CRD object
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := v.Client.List(ctx, postgresqlList); err != nil {
-		v.Log.Errorw("Failed to list PostgreSQL resources", "error", err)
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	var foundPostgresql *instancev1alpha1.Postgresql
-	for i := range postgresqlList.Items {
-		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
-			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			foundPostgresql = &postgresqlList.Items[i]
-			break
-		}
-	}
-
-	if foundPostgresql == nil {
+	foundPostgresql, err := k8sclient.FindPostgresqlByID(ctx, v.Client, postgresqlID)
+	if err != nil {
 		msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s does not exist in the cluster", postgresqlID)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID)
 		return admission.Denied(msg)
 	}
 
 	// Test PostgreSQL connection
-	if err := testPostgreSQLConnection(ctx, foundPostgresql, v.VaultClient, v.Log, v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
+	if err := testPostgreSQLConnection(
+		ctx, foundPostgresql, v.VaultClient, v.Log,
+		v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
 		msg := fmt.Sprintf("Cannot connect to PostgreSQL instance with postgresqlID %s: %v", postgresqlID, err)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "error", err)
 		return admission.Denied(msg)
 	}
 
-	// List all User resources across all namespaces in the cluster
-	userList := &instancev1alpha1.UserList{}
-	if err := v.Client.List(ctx, userList); err != nil {
-		v.Log.Errorw("Failed to list User resources", "error", err)
+	// Check for duplicate postgresqlID + username combination across the entire cluster
+	duplicateResult, err := k8sclient.CheckDuplicateUser(
+		ctx, v.Client, user.Name, user.Namespace, postgresqlID, username,
+		req.Operation == admissionv1.Update)
+	if err != nil {
+		v.Log.Errorw("Failed to check for duplicate User", "error", err)
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	// Check for duplicate postgresqlID + username combination across the entire cluster
-	for _, existingUser := range userList.Items {
-		// Skip the current resource if this is an update
-		if req.Operation == admissionv1.Update &&
-			existingUser.Name == user.Name &&
-			existingUser.Namespace == user.Namespace {
-			continue
-		}
-
-		if existingUser.Spec.PostgresqlID == postgresqlID &&
-			existingUser.Spec.Username == username {
-			msg := fmt.Sprintf("User with postgresqlID %s and username %s already exists in namespace %s (instance: %s)",
-				postgresqlID, username, existingUser.Namespace, existingUser.Name)
-			v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "username", username,
-				"existing-namespace", existingUser.Namespace, "existing-name", existingUser.Name)
-			return admission.Denied(msg)
-		}
+	if duplicateResult.Found {
+		v.Log.Infow("Validation denied",
+			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "username", username,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+		return admission.Denied(duplicateResult.Message)
 	}
 
-	v.Log.Infow("Validation passed", "name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
+	v.Log.Infow("Validation passed",
+		"name", user.Name, "namespace", user.Namespace, "postgresqlID", postgresqlID, "username", username)
 	return admission.Allowed("No duplicate postgresqlID and username combination found in cluster")
 }

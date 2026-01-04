@@ -18,15 +18,14 @@ package controller
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
-	_ "github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,9 +39,13 @@ import (
 // SchemaReconciler reconciles a Schema object
 type SchemaReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	VaultClient *vault.Client
-	Log         *zap.SugaredLogger
+	Scheme                      *runtime.Scheme
+	VaultClient                 *vault.Client
+	Log                         *zap.SugaredLogger
+	PostgresqlConnectionRetries int
+	PostgresqlConnectionTimeout time.Duration
+	VaultAvailabilityRetries    int
+	VaultAvailabilityRetryDelay time.Duration
 }
 
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=schemas,verbs=get;list;watch
@@ -52,7 +55,6 @@ type SchemaReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-
 	// Fetch the Schema instance
 	schema := &instancev1alpha1.Schema{}
 	if err := r.Get(ctx, req.NamespacedName, schema); err != nil {
@@ -64,7 +66,7 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// Find PostgreSQL instance by PostgresqlID
-	postgresql, err := r.findPostgresqlByID(ctx, schema.Spec.PostgresqlID)
+	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, schema.Spec.PostgresqlID)
 	if err != nil {
 		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", schema.Spec.PostgresqlID)
 		updateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
@@ -89,7 +91,8 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", schema.Spec.PostgresqlID)
+		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration",
+			"postgresqlID", schema.Spec.PostgresqlID)
 		updateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, schema); err != nil {
@@ -105,12 +108,14 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = defaultSSLMode
+		sslMode = pg.DefaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword string
 	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
+		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
+			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 		if err != nil {
 			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
 		} else {
@@ -123,10 +128,12 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		r.Log.Infow("Vault client not available")
 	}
 
-	// Create or update schema in PostgreSQL
+	// Create or update schema in PostgreSQL with retry logic
 	// Connect to postgres database as default
-	err = r.createOrUpdateSchema(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-		"postgres", schema.Spec.Schema, schema.Spec.Owner)
+	err = pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.CreateOrUpdateSchema(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
+			"postgres", schema.Spec.Schema, schema.Spec.Owner)
+	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "createOrUpdateSchema")
 	if err != nil {
 		r.Log.Error(err, "Failed to create/update schema in PostgreSQL", "schema", schema.Spec.Schema)
 		schema.Status.Created = false
@@ -136,7 +143,8 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		schema.Status.Created = true
 		updateSchemaCondition(schema, "Ready", metav1.ConditionTrue, "Created",
 			fmt.Sprintf("Schema %s successfully created", schema.Spec.Schema))
-		r.Log.Infow("Schema successfully created in PostgreSQL", "PostgresqlID", schema.Spec.PostgresqlID, "schema", schema.Spec.Schema)
+		r.Log.Infow("Schema successfully created in PostgreSQL",
+			"PostgresqlID", schema.Spec.PostgresqlID, "schema", schema.Spec.Schema)
 	}
 
 	now := metav1.Now()
@@ -152,70 +160,10 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
-// findPostgresqlByID finds a PostgreSQL instance by its PostgresqlID
-func (r *SchemaReconciler) findPostgresqlByID(ctx context.Context, postgresqlID string) (*instancev1alpha1.Postgresql, error) {
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := r.List(ctx, postgresqlList); err != nil {
-		return nil, fmt.Errorf("failed to list PostgreSQL instances: %w", err)
-	}
-
-	for i := range postgresqlList.Items {
-		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
-			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			return &postgresqlList.Items[i], nil
-		}
-	}
-
-	return nil, fmt.Errorf("PostgreSQL instance with ID %s not found", postgresqlID)
-}
-
-// createOrUpdateSchema creates or updates a PostgreSQL schema
-func (r *SchemaReconciler) createOrUpdateSchema(ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName, schemaName, owner string) error {
-	// Connect to the specific database
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, databaseName, sslMode)
-
-	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
-	}
-	defer db.Close()
-
-	// Escape schema name and owner for SQL identifiers (PostgreSQL uses double quotes)
-	escapedSchemaName := fmt.Sprintf(`"%s"`, strings.ReplaceAll(schemaName, `"`, `""`))
-	escapedOwner := fmt.Sprintf(`"%s"`, strings.ReplaceAll(owner, `"`, `""`))
-
-	// Check if schema exists
-	var exists bool
-	err = db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)", schemaName).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("failed to check if schema exists: %w", err)
-	}
-
-	if exists {
-		// Update schema owner
-		query := fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", escapedSchemaName, escapedOwner)
-		_, err = db.ExecContext(connCtx, query)
-		if err != nil {
-			return fmt.Errorf("failed to update schema owner: %w", err)
-		}
-	} else {
-		// Create new schema with owner
-		query := fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", escapedSchemaName, escapedOwner)
-		_, err = db.ExecContext(connCtx, query)
-		if err != nil {
-			return fmt.Errorf("failed to create schema: %w", err)
-		}
-	}
-
-	return nil
-}
-
 // updateSchemaCondition updates or adds a condition to the Schema status
-func updateSchemaCondition(schema *instancev1alpha1.Schema, conditionType string, status metav1.ConditionStatus, reason, message string) {
+// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
+func updateSchemaCondition(
+	schema *instancev1alpha1.Schema, conditionType string, status metav1.ConditionStatus, reason, message string) {
 	now := metav1.Now()
 	condition := metav1.Condition{
 		Type:               conditionType,

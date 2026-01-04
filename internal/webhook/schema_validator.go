@@ -29,6 +29,7 @@ import (
 	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -67,11 +68,13 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 	postgresqlID := schema.Spec.PostgresqlID
 	schemaName := schema.Spec.Schema
 
-	v.Log.Infow("Validating Schema resource", "name", schema.Name, "namespace", schema.Namespace, "postgresqlID", postgresqlID, "schema", schemaName)
+	v.Log.Infow("Validating Schema resource",
+		"name", schema.Name, "namespace", schema.Namespace, "postgresqlID", postgresqlID, "schema", schemaName)
 
 	// Check Vault availability if Vault client is configured
 	if v.VaultClient != nil {
-		if err := checkVaultAvailability(ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
+		if err := checkVaultAvailability(
+			ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
 			msg := fmt.Sprintf("Vault is not available: %v", err)
 			v.Log.Infow("Validation denied", "reason", msg)
 			return admission.Denied(msg)
@@ -79,60 +82,39 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 	}
 
 	// First, verify that the postgresqlID exists in a PostgreSQL CRD object
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := v.Client.List(ctx, postgresqlList); err != nil {
-		v.Log.Errorw("Failed to list PostgreSQL resources", "error", err)
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	var foundPostgresql *instancev1alpha1.Postgresql
-	for i := range postgresqlList.Items {
-		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
-			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			foundPostgresql = &postgresqlList.Items[i]
-			break
-		}
-	}
-
-	if foundPostgresql == nil {
+	foundPostgresql, err := k8sclient.FindPostgresqlByID(ctx, v.Client, postgresqlID)
+	if err != nil {
 		msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s does not exist in the cluster", postgresqlID)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID)
 		return admission.Denied(msg)
 	}
 
 	// Test PostgreSQL connection
-	if err := testPostgreSQLConnection(ctx, foundPostgresql, v.VaultClient, v.Log, v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
+	if err := testPostgreSQLConnection(
+		ctx, foundPostgresql, v.VaultClient, v.Log,
+		v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
 		msg := fmt.Sprintf("Cannot connect to PostgreSQL instance with postgresqlID %s: %v", postgresqlID, err)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "error", err)
 		return admission.Denied(msg)
 	}
 
-	// List all Schema resources across all namespaces in the cluster
-	schemaList := &instancev1alpha1.SchemaList{}
-	if err := v.Client.List(ctx, schemaList); err != nil {
-		v.Log.Errorw("Failed to list Schema resources", "error", err)
+	// Check for duplicate postgresqlID + schema combination across the entire cluster
+	duplicateResult, err := k8sclient.CheckDuplicateSchema(
+		ctx, v.Client, schema.Name, schema.Namespace, postgresqlID, schemaName,
+		req.Operation == admissionv1.Update)
+	if err != nil {
+		v.Log.Errorw("Failed to check for duplicate Schema", "error", err)
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	// Check for duplicate postgresqlID + schema combination across the entire cluster
-	for _, existingSchema := range schemaList.Items {
-		// Skip the current resource if this is an update
-		if req.Operation == admissionv1.Update &&
-			existingSchema.Name == schema.Name &&
-			existingSchema.Namespace == schema.Namespace {
-			continue
-		}
-
-		if existingSchema.Spec.PostgresqlID == postgresqlID &&
-			existingSchema.Spec.Schema == schemaName {
-			msg := fmt.Sprintf("Schema with postgresqlID %s and schema %s already exists in namespace %s (instance: %s)",
-				postgresqlID, schemaName, existingSchema.Namespace, existingSchema.Name)
-			v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "schema", schemaName,
-				"existing-namespace", existingSchema.Namespace, "existing-name", existingSchema.Name)
-			return admission.Denied(msg)
-		}
+	if duplicateResult.Found {
+		v.Log.Infow("Validation denied",
+			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "schema", schemaName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+		return admission.Denied(duplicateResult.Message)
 	}
 
-	v.Log.Infow("Validation passed", "name", schema.Name, "namespace", schema.Namespace, "postgresqlID", postgresqlID, "schema", schemaName)
+	v.Log.Infow("Validation passed",
+		"name", schema.Name, "namespace", schema.Namespace, "postgresqlID", postgresqlID, "schema", schemaName)
 	return admission.Allowed("No duplicate postgresqlID and schema combination found in cluster")
 }

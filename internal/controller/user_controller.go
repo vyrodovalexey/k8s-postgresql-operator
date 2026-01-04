@@ -19,14 +19,13 @@ package controller
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"fmt"
 	"math/big"
-	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -41,9 +40,13 @@ import (
 // UserReconciler reconciles a User object
 type UserReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	VaultClient *vault.Client
-	Log         *zap.SugaredLogger
+	Scheme                      *runtime.Scheme
+	VaultClient                 *vault.Client
+	Log                         *zap.SugaredLogger
+	PostgresqlConnectionRetries int
+	PostgresqlConnectionTimeout time.Duration
+	VaultAvailabilityRetries    int
+	VaultAvailabilityRetryDelay time.Duration
 }
 
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users,verbs=get;list;watch
@@ -53,7 +56,6 @@ type UserReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-
 	// Fetch the User instance
 	user := &instancev1alpha1.User{}
 	if err := r.Get(ctx, req.NamespacedName, user); err != nil {
@@ -65,7 +67,7 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	// Find PostgreSQL instance by PostgresqlID
-	postgresql, err := r.findPostgresqlByID(ctx, user.Spec.PostgresqlID)
+	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, user.Spec.PostgresqlID)
 	if err != nil {
 		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", user.Spec.PostgresqlID)
 		updateUserCondition(user, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
@@ -106,14 +108,16 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = defaultSSLMode
+		sslMode = pg.DefaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword, dbPassword string
 
 	// Get admin credentials from Vault if available
 	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, user.Spec.PostgresqlID)
+		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+			ctx, r.VaultClient, user.Spec.PostgresqlID, r.Log,
+			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 		if err != nil {
 			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", user.Spec.PostgresqlID)
 		} else {
@@ -127,7 +131,9 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Get user password from Vault or generate/store it
 	if r.VaultClient != nil {
-		vaultUserPassword, err := r.VaultClient.GetPostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username)
+		vaultUserPassword, err := getVaultUserCredentialsWithRetry(
+			ctx, r.VaultClient, user.Spec.PostgresqlID, user.Spec.Username, r.Log,
+			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 		credentialsExist := err == nil && vaultUserPassword != ""
 
 		// Generate new password if:
@@ -137,24 +143,30 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 		if shouldGeneratePassword {
 			if !credentialsExist {
-				r.Log.Info("User credentials not found in Vault, generating new password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username, "error", err)
+				r.Log.Info("User credentials not found in Vault, generating new password",
+					"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username, "error", err)
 			} else if user.Spec.UpdatePassword {
-				r.Log.Info("updatePassword is true, regenerating password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Info("updatePassword is true, regenerating password",
+					"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 			}
 
 			// Generate random password
 			generatedPassword, err := generateRandomPassword(32)
 			if err != nil {
-				r.Log.Error(err, "Failed to generate random password", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Error(err, "Failed to generate random password",
+					"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 				return ctrl.Result{}, fmt.Errorf("failed to generate random password: %w", err)
 			}
 			dbPassword = generatedPassword
 			r.Log.Info("Generated random password for user", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 
 			// Store/update password in Vault
-			err = r.VaultClient.StorePostgresqlUserCredentials(ctx, user.Spec.PostgresqlID, user.Spec.Username, dbPassword)
+			err = storeVaultUserCredentialsWithRetry(
+				ctx, r.VaultClient, user.Spec.PostgresqlID, user.Spec.Username, dbPassword, r.Log,
+				r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 			if err != nil {
-				r.Log.Error(err, "Failed to store user credentials in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+				r.Log.Error(err, "Failed to store user credentials in Vault",
+					"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 				// Continue with reconciliation even if Vault storage fails
 			} else {
 				if credentialsExist {
@@ -166,16 +178,19 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		} else {
 			// Use existing password from Vault
 			dbPassword = vaultUserPassword
-			r.Log.Info("User credentials retrieved from Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			r.Log.Info("User credentials retrieved from Vault",
+				"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
 		}
 	} else {
 		// Use password from spec if Vault is not available
 		r.Log.Info("Vault client not available")
 	}
 
-	// Create or update user in PostgreSQL
-	err = r.createOrUpdateUser(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-		user.Spec.Username, dbPassword)
+	// Create or update user in PostgreSQL with retry logic
+	err = pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.CreateOrUpdateUser(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
+			user.Spec.Username, dbPassword)
+	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "createOrUpdateUser")
 	if err != nil {
 		r.Log.Error(err, "Failed to create/update user in PostgreSQL, ", "username: ", user.Spec.Username)
 		user.Status.Created = false
@@ -198,71 +213,6 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	r.Log.Info("Successfully reconciled User with ", "username: ", user.Spec.Username)
 	return ctrl.Result{}, nil
-}
-
-// findPostgresqlByID finds a PostgreSQL instance by its PostgresqlID
-func (r *UserReconciler) findPostgresqlByID(ctx context.Context, postgresqlID string) (*instancev1alpha1.Postgresql, error) {
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := r.List(ctx, postgresqlList); err != nil {
-		return nil, fmt.Errorf("failed to list PostgreSQL instances: %w", err)
-	}
-
-	for i := range postgresqlList.Items {
-		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
-			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			return &postgresqlList.Items[i], nil
-		}
-	}
-
-	return nil, fmt.Errorf("PostgreSQL instance with ID %s not found", postgresqlID)
-}
-
-// createOrUpdateUser creates or updates a PostgreSQL user
-func (r *UserReconciler) createOrUpdateUser(ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, username, password string) error {
-	// Connect to PostgreSQL as admin user
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, sslMode)
-
-	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
-	}
-	defer db.Close()
-
-	// Escape username for SQL identifier (PostgreSQL uses double quotes)
-	// Replace double quotes with two double quotes to escape them
-	escapedUsername := fmt.Sprintf(`"%s"`, strings.ReplaceAll(username, `"`, `""`))
-
-	// Escape password for SQL string literal (replace single quotes with two single quotes)
-	escapedPassword := strings.ReplaceAll(password, `'`, `''`)
-
-	// Check if user exists
-	var exists bool
-	err = db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM pg_user WHERE usename = $1)", username).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("failed to check if user exists: %w", err)
-	}
-
-	if exists {
-		// Update user password - PostgreSQL doesn't support parameters in ALTER USER
-		query := fmt.Sprintf("ALTER USER %s WITH PASSWORD '%s'", escapedUsername, escapedPassword)
-		_, err = db.ExecContext(connCtx, query)
-		if err != nil {
-			return fmt.Errorf("failed to update user password: %w", err)
-		}
-	} else {
-		// Create new user - PostgreSQL doesn't support parameters in CREATE USER
-		query := fmt.Sprintf("CREATE USER %s WITH PASSWORD '%s'", escapedUsername, escapedPassword)
-		_, err = db.ExecContext(connCtx, query)
-		if err != nil {
-			return fmt.Errorf("failed to create user: %w", err)
-		}
-	}
-
-	return nil
 }
 
 // generateRandomPassword generates a secure random password of the specified length
@@ -289,7 +239,9 @@ func generateRandomPassword(length int) (string, error) {
 }
 
 // updateUserCondition updates or adds a condition to the User status
-func updateUserCondition(user *instancev1alpha1.User, conditionType string, status metav1.ConditionStatus, reason, message string) {
+// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
+func updateUserCondition(
+	user *instancev1alpha1.User, conditionType string, status metav1.ConditionStatus, reason, message string) {
 	now := metav1.Now()
 	condition := metav1.Condition{
 		Type:               conditionType,

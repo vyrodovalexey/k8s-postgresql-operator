@@ -29,6 +29,7 @@ import (
 	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -64,11 +65,13 @@ func (v *RoleGroupValidator) Handle(ctx context.Context, req admission.Request) 
 	postgresqlID := roleGroup.Spec.PostgresqlID
 	groupRole := roleGroup.Spec.GroupRole
 
-	v.Log.Infow("Validating RoleGroup resource", "name", roleGroup.Name, "namespace", roleGroup.Namespace, "postgresqlID", postgresqlID, "groupRole", groupRole)
+	v.Log.Infow("Validating RoleGroup resource",
+		"name", roleGroup.Name, "namespace", roleGroup.Namespace, "postgresqlID", postgresqlID, "groupRole", groupRole)
 
 	// Check Vault availability if Vault client is configured
 	if v.VaultClient != nil {
-		if err := checkVaultAvailability(ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
+		if err := checkVaultAvailability(
+			ctx, v.VaultClient, v.Log, v.VaultAvailabilityRetries, v.VaultAvailabilityRetryDelay); err != nil {
 			msg := fmt.Sprintf("Vault is not available: %v", err)
 			v.Log.Infow("Validation denied", "reason", msg)
 			return admission.Denied(msg)
@@ -76,60 +79,39 @@ func (v *RoleGroupValidator) Handle(ctx context.Context, req admission.Request) 
 	}
 
 	// First, verify that the postgresqlID exists in a PostgreSQL CRD object
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := v.Client.List(ctx, postgresqlList); err != nil {
-		v.Log.Errorw("Failed to list PostgreSQL resources", "error", err)
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	var foundPostgresql *instancev1alpha1.Postgresql
-	for i := range postgresqlList.Items {
-		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
-			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			foundPostgresql = &postgresqlList.Items[i]
-			break
-		}
-	}
-
-	if foundPostgresql == nil {
+	foundPostgresql, err := k8sclient.FindPostgresqlByID(ctx, v.Client, postgresqlID)
+	if err != nil {
 		msg := fmt.Sprintf("PostgreSQL instance with postgresqlID %s does not exist in the cluster", postgresqlID)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID)
 		return admission.Denied(msg)
 	}
 
 	// Test PostgreSQL connection
-	if err := testPostgreSQLConnection(ctx, foundPostgresql, v.VaultClient, v.Log, v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
+	if err := testPostgreSQLConnection(
+		ctx, foundPostgresql, v.VaultClient, v.Log,
+		v.PostgresqlConnectionRetries, v.PostgresqlConnectionTimeout); err != nil {
 		msg := fmt.Sprintf("Cannot connect to PostgreSQL instance with postgresqlID %s: %v", postgresqlID, err)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "error", err)
 		return admission.Denied(msg)
 	}
 
-	// List all RoleGroup resources across all namespaces in the cluster
-	roleGroupList := &instancev1alpha1.RoleGroupList{}
-	if err := v.Client.List(ctx, roleGroupList); err != nil {
-		v.Log.Errorw("Failed to list RoleGroup resources", "error", err)
+	// Check for duplicate postgresqlID + groupRole combination across the entire cluster
+	duplicateResult, err := k8sclient.CheckDuplicateRoleGroup(
+		ctx, v.Client, roleGroup.Name, roleGroup.Namespace, postgresqlID, groupRole,
+		req.Operation == admissionv1.Update)
+	if err != nil {
+		v.Log.Errorw("Failed to check for duplicate RoleGroup", "error", err)
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	// Check for duplicate postgresqlID + groupRole combination across the entire cluster
-	for _, existingRoleGroup := range roleGroupList.Items {
-		// Skip the current resource if this is an update
-		if req.Operation == admissionv1.Update &&
-			existingRoleGroup.Name == roleGroup.Name &&
-			existingRoleGroup.Namespace == roleGroup.Namespace {
-			continue
-		}
-
-		if existingRoleGroup.Spec.PostgresqlID == postgresqlID &&
-			existingRoleGroup.Spec.GroupRole == groupRole {
-			msg := fmt.Sprintf("RoleGroup with postgresqlID %s and groupRole %s already exists in namespace %s (instance: %s)",
-				postgresqlID, groupRole, existingRoleGroup.Namespace, existingRoleGroup.Name)
-			v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "groupRole", groupRole,
-				"existing-namespace", existingRoleGroup.Namespace, "existing-name", existingRoleGroup.Name)
-			return admission.Denied(msg)
-		}
+	if duplicateResult.Found {
+		v.Log.Infow("Validation denied",
+			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "groupRole", groupRole,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+		return admission.Denied(duplicateResult.Message)
 	}
 
-	v.Log.Infow("Validation passed", "name", roleGroup.Name, "namespace", roleGroup.Namespace, "postgresqlID", postgresqlID, "groupRole", groupRole)
+	v.Log.Infow("Validation passed",
+		"name", roleGroup.Name, "namespace", roleGroup.Namespace, "postgresqlID", postgresqlID, "groupRole", groupRole)
 	return admission.Allowed("No duplicate postgresqlID and groupRole combination found in cluster")
 }

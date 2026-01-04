@@ -32,6 +32,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 )
 
 // MockVaultClient is a mock implementation of vault.Client for testing
@@ -64,8 +65,12 @@ func TestUserReconciler_Reconcile_NotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	req := ctrl.Request{
@@ -89,8 +94,12 @@ func TestUserReconciler_FindPostgresqlByID_Success(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlID := "test-id-123"
@@ -120,7 +129,7 @@ func TestUserReconciler_FindPostgresqlByID_Success(t *testing.T) {
 		*list = *postgresqlList
 	})
 
-	result, err := reconciler.findPostgresqlByID(context.Background(), postgresqlID)
+	result, err := k8sclient.FindPostgresqlByID(context.Background(), reconciler.Client, postgresqlID)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -133,8 +142,12 @@ func TestUserReconciler_FindPostgresqlByID_NotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	postgresqlList := &instancev1alpha1.PostgresqlList{
@@ -146,7 +159,7 @@ func TestUserReconciler_FindPostgresqlByID_NotFound(t *testing.T) {
 		*list = *postgresqlList
 	})
 
-	result, err := reconciler.findPostgresqlByID(context.Background(), "non-existent-id")
+	result, err := k8sclient.FindPostgresqlByID(context.Background(), reconciler.Client, "non-existent-id")
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -202,8 +215,12 @@ func TestUserReconciler_Reconcile_GetError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	req := ctrl.Request{
@@ -229,8 +246,12 @@ func TestUserReconciler_Reconcile_PostgresqlNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	user := &instancev1alpha1.User{
@@ -280,8 +301,12 @@ func TestUserReconciler_Reconcile_PostgresqlNotConnected(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	user := &instancev1alpha1.User{
@@ -349,8 +374,12 @@ func TestUserReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	user := &instancev1alpha1.User{
@@ -417,13 +446,17 @@ func TestUserReconciler_FindPostgresqlByID_ListError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client: mockClient,
-		Log:    logger,
+		Client:                      mockClient,
+		Log:                         logger,
+		PostgresqlConnectionRetries: 3,
+		PostgresqlConnectionTimeout: 10 * time.Second,
+		VaultAvailabilityRetries:    3,
+		VaultAvailabilityRetryDelay: 10 * time.Second,
 	}
 
 	mockClient.On("List", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("list error"))
 
-	result, err := reconciler.findPostgresqlByID(context.Background(), "test-id")
+	result, err := k8sclient.FindPostgresqlByID(context.Background(), reconciler.Client, "test-id")
 
 	assert.Error(t, err)
 	assert.Nil(t, result)

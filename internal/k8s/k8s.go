@@ -32,6 +32,7 @@ import (
 // Returns the namespace or a default value if not found
 func GetCurrentNamespace(namespaceFile string) string {
 	// Try to read from the service account namespace file (standard in Kubernetes pods)
+	// nolint:gosec // reading from service account namespace file is safe in Kubernetes context
 	if data, err := os.ReadFile(namespaceFile); err == nil {
 		if ns := strings.TrimSpace(string(data)); ns != "" {
 			return ns
@@ -43,7 +44,8 @@ func GetCurrentNamespace(namespaceFile string) string {
 }
 
 // UpdateWebhookConfigurationWithCABundle updates the ValidatingWebhookConfiguration with the CA bundle from the secret
-func UpdateWebhookConfigurationWithCABundle(secretName, namespace string, config *rest.Config, webHookName string, lg *zap.SugaredLogger) error {
+func UpdateWebhookConfigurationWithCABundle(
+	secretName, namespace string, config *rest.Config, webHookName string, lg *zap.SugaredLogger) error {
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
@@ -64,7 +66,8 @@ func UpdateWebhookConfigurationWithCABundle(secretName, namespace string, config
 
 	// Get the ValidatingWebhookConfiguration
 	webhookConfigName := webHookName
-	webhookConfig, err := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(ctx, webhookConfigName, metav1.GetOptions{})
+	webhookConfig, err := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
+		ctx, webhookConfigName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get ValidatingWebhookConfiguration: %w", err)
 	}
@@ -80,11 +83,13 @@ func UpdateWebhookConfigurationWithCABundle(secretName, namespace string, config
 	}
 
 	if !updated {
-		return fmt.Errorf("webhook 'postgresql-operator.vyrodovalexey.github.com' not found in ValidatingWebhookConfiguration")
+		return fmt.Errorf(
+			"webhook 'postgresql-operator.vyrodovalexey.github.com' not found in ValidatingWebhookConfiguration")
 	}
 
 	// Update the ValidatingWebhookConfiguration
-	_, err = clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(ctx, webhookConfig, metav1.UpdateOptions{})
+	_, err = clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(
+		ctx, webhookConfig, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update ValidatingWebhookConfiguration: %w", err)
 	}

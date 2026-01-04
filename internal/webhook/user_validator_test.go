@@ -500,11 +500,13 @@ func TestUserValidator_Handle_PostgresqlListError(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.User")).Return(user, nil)
+	// When FindPostgresqlByID fails (List error), it returns an error which results in admission.Denied (403)
 	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
-	assert.Equal(t, int32(500), response.Result.Code)
+	// FindPostgresqlByID returns an error for List failures, which results in admission.Denied (403)
+	assert.Equal(t, int32(403), response.Result.Code)
 }
 
 func TestUserValidator_Handle_UserListError(t *testing.T) {

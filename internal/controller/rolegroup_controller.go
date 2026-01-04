@@ -18,15 +18,14 @@ package controller
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
-	_ "github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,19 +39,23 @@ import (
 // RoleGroupReconciler reconciles a RoleGroup object
 type RoleGroupReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	VaultClient *vault.Client
-	Log         *zap.SugaredLogger
+	Scheme                      *runtime.Scheme
+	VaultClient                 *vault.Client
+	Log                         *zap.SugaredLogger
+	PostgresqlConnectionRetries int
+	PostgresqlConnectionTimeout time.Duration
+	VaultAvailabilityRetries    int
+	VaultAvailabilityRetryDelay time.Duration
 }
 
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=rolegroups,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=rolegroups/status,verbs=get;update;patch
+//nolint:lll // kubebuilder directive cannot be split
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=rolegroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-
 	// Fetch the RoleGroup instance
 	roleGroup := &instancev1alpha1.RoleGroup{}
 	if err := r.Get(ctx, req.NamespacedName, roleGroup); err != nil {
@@ -64,7 +67,7 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Find PostgreSQL instance by PostgresqlID
-	postgresql, err := r.findPostgresqlByID(ctx, roleGroup.Spec.PostgresqlID)
+	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, roleGroup.Spec.PostgresqlID)
 	if err != nil {
 		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", roleGroup.Spec.PostgresqlID)
 		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
@@ -89,7 +92,8 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", roleGroup.Spec.PostgresqlID)
+		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration",
+			"postgresqlID", roleGroup.Spec.PostgresqlID)
 		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, roleGroup); err != nil {
@@ -105,12 +109,14 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = defaultSSLMode
+		sslMode = pg.DefaultSSLMode
 	}
 
 	var postgresUsername, postgresPassword string
 	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
+		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
+			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 		if err != nil {
 			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
 			updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "VaultError",
@@ -134,8 +140,10 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Create or update role group in PostgreSQL
-	err = r.createOrUpdateRoleGroup(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-		roleGroup.Spec.GroupRole, roleGroup.Spec.MemberRoles)
+	err = pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.CreateOrUpdateRoleGroup(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
+			roleGroup.Spec.GroupRole, roleGroup.Spec.MemberRoles)
+	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "createOrUpdateRoleGroup")
 	if err != nil {
 		r.Log.Error(err, "Failed to create/update role group in PostgreSQL", "groupRole", roleGroup.Spec.GroupRole)
 		roleGroup.Status.Created = false
@@ -145,7 +153,8 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		roleGroup.Status.Created = true
 		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionTrue, "Created",
 			fmt.Sprintf("Role group %s successfully created in PostgreSQL", roleGroup.Spec.GroupRole))
-		r.Log.Infow("Role group successfully created in PostgreSQL", "PostgresqlID", roleGroup.Spec.PostgresqlID, "groupRole", roleGroup.Spec.GroupRole)
+		r.Log.Infow("Role group successfully created in PostgreSQL",
+			"PostgresqlID", roleGroup.Spec.PostgresqlID, "groupRole", roleGroup.Spec.GroupRole)
 	}
 
 	now := metav1.Now()
@@ -161,124 +170,10 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-// findPostgresqlByID finds a PostgreSQL instance by its PostgresqlID
-func (r *RoleGroupReconciler) findPostgresqlByID(ctx context.Context, postgresqlID string) (*instancev1alpha1.Postgresql, error) {
-	postgresqlList := &instancev1alpha1.PostgresqlList{}
-	if err := r.List(ctx, postgresqlList); err != nil {
-		return nil, fmt.Errorf("failed to list PostgreSQL instances: %w", err)
-	}
-
-	for i := range postgresqlList.Items {
-		if postgresqlList.Items[i].Spec.ExternalInstance != nil &&
-			postgresqlList.Items[i].Spec.ExternalInstance.PostgresqlID == postgresqlID {
-			return &postgresqlList.Items[i], nil
-		}
-	}
-
-	return nil, fmt.Errorf("PostgreSQL instance with ID %s not found", postgresqlID)
-}
-
-// createOrUpdateRoleGroup creates or updates a PostgreSQL role group
-func (r *RoleGroupReconciler) createOrUpdateRoleGroup(ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, groupRole string, memberRoles []string) error {
-	// Connect to PostgreSQL as admin user
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, sslMode)
-
-	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
-	}
-	defer db.Close()
-
-	// Escape group role name for SQL identifier
-	escapedGroupRole := fmt.Sprintf(`"%s"`, strings.ReplaceAll(groupRole, `"`, `""`))
-
-	// Check if group role exists
-	var exists bool
-	err = db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)", groupRole).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("failed to check if group role exists: %w", err)
-	}
-
-	if !exists {
-		// Create the group role (as a role, not a user, so it can be a group)
-		query := fmt.Sprintf("CREATE ROLE %s", escapedGroupRole)
-		_, err = db.ExecContext(connCtx, query)
-		if err != nil {
-			return fmt.Errorf("failed to create group role: %w", err)
-		}
-	}
-
-	// Get current members of the group role
-	currentMembers := make(map[string]bool)
-	rows, err := db.QueryContext(connCtx, `
-		SELECT r.rolname 
-		FROM pg_roles r 
-		JOIN pg_auth_members m ON r.oid = m.member 
-		JOIN pg_roles g ON g.oid = m.roleid 
-		WHERE g.rolname = $1`, groupRole)
-	if err != nil {
-		return fmt.Errorf("failed to query current members: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var member string
-		if err := rows.Scan(&member); err != nil {
-			return fmt.Errorf("failed to scan member: %w", err)
-		}
-		currentMembers[member] = true
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating members: %w", err)
-	}
-
-	// Add new members that are not already members
-	desiredMembers := make(map[string]bool)
-	for _, memberRole := range memberRoles {
-		desiredMembers[memberRole] = true
-		if !currentMembers[memberRole] {
-			// Check if member role exists
-			var memberExists bool
-			err = db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)", memberRole).Scan(&memberExists)
-			if err != nil {
-				return fmt.Errorf("failed to check if member role exists: %w", err)
-			}
-			if !memberExists {
-				r.Log.Warnw("Member role does not exist, skipping", "memberRole", memberRole)
-				continue
-			}
-
-			// Add member to group
-			escapedMemberRole := fmt.Sprintf(`"%s"`, strings.ReplaceAll(memberRole, `"`, `""`))
-			query := fmt.Sprintf("GRANT %s TO %s", escapedGroupRole, escapedMemberRole)
-			_, err = db.ExecContext(connCtx, query)
-			if err != nil {
-				return fmt.Errorf("failed to add member %s to group role: %w", memberRole, err)
-			}
-		}
-	}
-
-	// Remove members that are no longer in the desired list
-	for member := range currentMembers {
-		if !desiredMembers[member] {
-			escapedMemberRole := fmt.Sprintf(`"%s"`, strings.ReplaceAll(member, `"`, `""`))
-			query := fmt.Sprintf("REVOKE %s FROM %s", escapedGroupRole, escapedMemberRole)
-			_, err = db.ExecContext(connCtx, query)
-			if err != nil {
-				return fmt.Errorf("failed to remove member %s from group role: %w", member, err)
-			}
-		}
-	}
-
-	return nil
-}
-
 // updateRoleGroupCondition updates or adds a condition to the RoleGroup status
-func updateRoleGroupCondition(roleGroup *instancev1alpha1.RoleGroup, conditionType string, status metav1.ConditionStatus, reason, message string) {
+// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
+func updateRoleGroupCondition(
+	roleGroup *instancev1alpha1.RoleGroup, conditionType string, status metav1.ConditionStatus, reason, message string) {
 	now := metav1.Now()
 	condition := metav1.Condition{
 		Type:               conditionType,

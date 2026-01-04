@@ -1,10 +1,11 @@
 package logging
 
 import (
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"log"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func NewLogging(loglevel zapcore.Level) *zap.SugaredLogger {
@@ -17,7 +18,7 @@ func NewLogging(loglevel zapcore.Level) *zap.SugaredLogger {
 	if err != nil {
 		log.Printf("can't initialize zap logger: %v", err)
 	}
-	// nolint:errcheck
+	// nolint:errcheck // error is already logged above, no need to check again
 	defer logger.Sync()
 	return logger.Sugar()
 }

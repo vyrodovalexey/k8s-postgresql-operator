@@ -94,13 +94,14 @@ func (c *Collector) collectPostgresqls(ctx context.Context) error {
 
 	// Count per postgresqlID (should be 1 per ID, but we'll track it)
 	for _, pg := range postgresqlList.Items {
-		if pg.Spec.ExternalInstance != nil && pg.Spec.ExternalInstance.PostgresqlID != "" {
-			postgresqlID := pg.Spec.ExternalInstance.PostgresqlID
-			postgresqlIDCounts[postgresqlID]++
-			key := "postgresql:" + postgresqlID + ":" + pg.Name + ":" + pg.Namespace
-			currentObjects[key] = true
-			SetObjectInfo("postgresql", postgresqlID, pg.Name, pg.Namespace)
+		if pg.Spec.ExternalInstance == nil || pg.Spec.ExternalInstance.PostgresqlID == "" {
+			continue
 		}
+		postgresqlID := pg.Spec.ExternalInstance.PostgresqlID
+		postgresqlIDCounts[postgresqlID]++
+		key := "postgresql:" + postgresqlID + ":" + pg.Name + ":" + pg.Namespace
+		currentObjects[key] = true
+		SetObjectInfo("postgresql", postgresqlID, pg.Name, pg.Namespace)
 	}
 
 	// Update counts per postgresqlID

@@ -38,6 +38,18 @@ type DatabaseSpec struct {
 	// PostgresqlID is the ID of the PostgreSQL instance where this database should be created
 	// +required
 	PostgresqlID string `json:"postgresqlID"`
+
+	// DeleteFromCRD indicates whether the database should be deleted from PostgreSQL when the CRD is deleted
+	// If true, the database will be removed from PostgreSQL when the Database CRD is deleted
+	// Default is false
+	// +optional
+	// +kubebuilder:default=false
+	DeleteFromCRD bool `json:"deleteFromCRD,omitempty"`
+
+	// DBTemplate is the name of an existing database to use as a template when creating this database
+	// If specified, the new database will be created as a copy of the template database
+	// +optional
+	DBTemplate string `json:"dbTemplate,omitempty"`
 }
 
 // DatabaseStatus defines the observed state of Database

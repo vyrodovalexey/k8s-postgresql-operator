@@ -18,11 +18,9 @@ package controller
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,28 +31,31 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
-)
-
-const (
-	defaultSSLMode = "require"
 )
 
 // PostgresqlReconciler reconciles a Postgresql object
 type PostgresqlReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	VaultClient *vault.Client
-	Log         *zap.SugaredLogger
+	Scheme                      *runtime.Scheme
+	VaultClient                 *vault.Client
+	Log                         *zap.SugaredLogger
+	PostgresqlConnectionRetries int
+	PostgresqlConnectionTimeout time.Duration
+	VaultAvailabilityRetries    int
+	VaultAvailabilityRetryDelay time.Duration
 }
 
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls/status,verbs=get;update;patch
+//nolint:lll // kubebuilder directive cannot be split
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls/finalizers,verbs=update
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;patch;update
+//nolint:lll // kubebuilder directive cannot be split
 
 func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Fetch the Postgresql instance
@@ -80,7 +81,8 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 // reconcileExternalInstance handles reconciliation for external PostgreSQL instances
-func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, postgresql *instancev1alpha1.Postgresql) (ctrl.Result, error) {
+func (r *PostgresqlReconciler) reconcileExternalInstance(
+	ctx context.Context, postgresql *instancev1alpha1.Postgresql) (ctrl.Result, error) {
 	externalInstance := postgresql.Spec.ExternalInstance
 
 	// Set default port if not specified
@@ -95,7 +97,9 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 
 	// If credentials are not provided in spec, try to get them from Vault
 	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := r.VaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
+		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
+			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 		if err != nil {
 			r.Log.Error(err, "Failed to get credentials from Vault, ", "postgresqlID: ", externalInstance.PostgresqlID)
 		} else {
@@ -108,14 +112,15 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	// Set default SSL mode if not specified
 	sslMode := externalInstance.SSLMode
 	if sslMode == "" {
-		sslMode = defaultSSLMode
+		sslMode = pg.DefaultSSLMode
 	}
 
 	// Set default database if not specified
 	database := "postgres"
 
 	// Test PostgreSQL connection
-	connected, err := r.testPostgreSQLConnection(ctx, externalInstance.Address, port, database, username, password, sslMode)
+	connected, err := pg.TestConnection(ctx, externalInstance.Address, port, database, username, password, sslMode,
+		r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout)
 	if err != nil {
 		r.Log.Error(err, "Failed to test PostgreSQL connection, ", "address: ", connectionAddress)
 	}
@@ -146,9 +151,11 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 		conditionStatus = metav1.ConditionFalse
 		conditionReason = "ConnectionFailed"
 		if err != nil {
-			conditionMessage = fmt.Sprintf("Failed to connect to PostgreSQL with id %s at %s: %v", externalInstance.PostgresqlID, connectionAddress, err)
+			conditionMessage = fmt.Sprintf("Failed to connect to PostgreSQL with id %s at %s: %v",
+				externalInstance.PostgresqlID, connectionAddress, err)
 		} else {
-			conditionMessage = fmt.Sprintf("Failed to connect to PostgreSQL with id %s at %s", externalInstance.PostgresqlID, connectionAddress)
+			conditionMessage = fmt.Sprintf("Failed to connect to PostgreSQL with id %s at %s",
+				externalInstance.PostgresqlID, connectionAddress)
 		}
 	}
 
@@ -190,40 +197,10 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(ctx context.Context, po
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
-// testPostgreSQLConnection tests the connection to a PostgreSQL instance
-func (r *PostgresqlReconciler) testPostgreSQLConnection(ctx context.Context, host string, port int32, database, username, password, sslMode string) (bool, error) {
-	// Build connection string
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-		host, port, username, password, database, sslMode)
-
-	// Create a context with timeout for the connection test
-	connCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	// Open connection
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return false, fmt.Errorf("failed to open database connection: %w", err)
-	}
-	defer db.Close()
-
-	// Test the connection with a simple query
-	var result int
-	err = db.QueryRowContext(connCtx, "SELECT 1").Scan(&result)
-	if err != nil {
-		return false, fmt.Errorf("failed to query database: %w", err)
-	}
-
-	// Verify we got the expected result
-	if result != 1 {
-		return false, fmt.Errorf("unexpected query result: %d", result)
-	}
-
-	return true, nil
-}
-
 // updateCondition updates or adds a condition to the Postgresql status
-func updateCondition(postgresql *instancev1alpha1.Postgresql, conditionType string, status metav1.ConditionStatus, reason, message string) {
+// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
+func updateCondition(
+	postgresql *instancev1alpha1.Postgresql, conditionType string, status metav1.ConditionStatus, reason, message string) {
 	now := metav1.Now()
 	condition := metav1.Condition{
 		Type:               conditionType,
