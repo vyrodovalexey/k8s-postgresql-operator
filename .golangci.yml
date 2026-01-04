@@ -74,7 +74,6 @@ linters:
           sizeThreshold: 512
         rangeValCopy:
           sizeThreshold: 512
-      line-length: 300
     gocyclo:
       min-complexity: 25
     nestif:
