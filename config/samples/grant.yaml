@@ -1,0 +1,76 @@
+---
+apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
+kind: User
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-postgresql-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: user-sample-reader
+spec:
+  # Username is the PostgreSQL username to create
+  username: "myuser-reader"
+
+  # Regenerate password
+  updatePassword: false
+
+  # PostgresqlID is the ID of the PostgreSQL instance where this user should be created
+  # This must match the postgresqlID in the Postgresql CRD
+  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+
+---
+apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
+kind: Grant
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-postgresql-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: grant-sample
+spec:
+  # Role is the PostgreSQL role/user to grant permissions to
+  # This user must exist in PostgreSQL (can be created via User CRD)
+  role: "myuser-reader"
+  
+  # Database is the PostgreSQL database name where grants should be applied
+  database: "mydatabase"
+  
+  # PostgresqlID is the ID of the PostgreSQL instance where grants should be applied
+  # This must match the postgresqlID in the Postgresql CRD
+  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  
+  # Grants is the list of grants to apply
+  # Grant types: database, schema, table, sequence, function, all_tables, all_sequences
+  grants:
+    # Grant CONNECT privilege on the database
+    - type: database
+      privileges: [CONNECT]
+    
+    # Grant USAGE privilege on the public schema
+    - type: schema
+      schema: public
+      privileges: [USAGE]
+    
+    # Grant SELECT privilege on all existing tables in the public schema
+    - type: all_tables
+      schema: public
+      privileges: [SELECT]
+    
+    # Grant SELECT and USAGE privileges on all existing sequences in the public schema
+    - type: all_sequences
+      schema: public
+      privileges: [SELECT, USAGE]
+  
+  # DefaultPrivileges is the list of default privileges for future objects
+  # These privileges will be automatically granted to the role when new objects are created
+  defaultPrivileges:
+    # Grant SELECT privilege on future tables in the public schema
+    - objectType: tables
+      schema: public
+      privileges: [SELECT]
+    
+    # Grant SELECT and USAGE privileges on future sequences in the public schema
+    - objectType: sequences
+      schema: public
+      privileges: [SELECT, USAGE]
+

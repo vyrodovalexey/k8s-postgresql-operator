@@ -1,0 +1,15 @@
+apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
+kind: Database
+metadata:
+  name: database-from-template
+  namespace: default
+spec:
+  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  database: "myapp_production"
+  owner: "myuser"
+  schema: "public"
+  # Create database from a template database
+  dbTemplate: "template_db"
+  # Delete database from PostgreSQL when CRD is deleted
+  deleteFromCRD: true
+

@@ -2,22 +2,19 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: manager-role
+  name: role
 rules:
 - apiGroups:
   - ""
   resources:
-  - secrets
+  - events
   verbs:
-  - get
-  - list
-  - watch
+  - create
+  - patch
 - apiGroups:
-  - instance.alexvyrodov.example
+  - ""
   resources:
-  - databases
-  - postgresqls
-  - users
+  - secrets
   verbs:
   - create
   - delete
@@ -27,20 +24,69 @@ rules:
   - update
   - watch
 - apiGroups:
-  - instance.alexvyrodov.example
+  - admissionregistration.k8s.io
+  resources:
+  - validatingwebhookconfigurations
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - postgresql-operator.vyrodovalexey.github.com
+  resources:
+  - databases
+  verbs:
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - postgresql-operator.vyrodovalexey.github.com
   resources:
   - databases/finalizers
+  - grants/finalizers
   - postgresqls/finalizers
+  - rolegroups/finalizers
+  - schemas/finalizers
   - users/finalizers
   verbs:
   - update
 - apiGroups:
-  - instance.alexvyrodov.example
+  - postgresql-operator.vyrodovalexey.github.com
   resources:
   - databases/status
+  - grants/status
   - postgresqls/status
+  - rolegroups/status
+  - schemas/status
   - users/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - postgresql-operator.vyrodovalexey.github.com
+  resources:
+  - grants
+  - postgresqls
+  - rolegroups
+  - schemas
+  - users
+  verbs:
+  - get
+  - list
+  - watch

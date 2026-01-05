@@ -1,0 +1,125 @@
+# Default values for k8s-postgresql-operator
+# This is a YAML-formatted file.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Operator image configuration
+image:
+  repository: k8s-postgresql-operator
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Replica count for the operator deployment
+replicaCount: 1
+
+# Name override for the operator
+nameOverride: ""
+fullnameOverride: ""
+
+# Service account configuration
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity: {}
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Vault configuration
+vault:
+  addr: "http://0.0.0.0:8200"
+  role: "role"
+  mountPoint: "secret"
+  secretPath: "pdb"
+
+# Webhook configuration
+webhook:
+  certPath: ""
+  certName: "tls.crt"
+  certKey: "tls.key"
+  serverPort: 8443
+  serverAddr: "0.0.0.0"
+  k8sServiceName: "k8s-postgresql-operator-controller-service"
+  names:
+    postgresql: "k8s-postgresql-operator-validating-webhook-postgresql"
+    user: "k8s-postgresql-operator-validating-webhook-user"
+    database: "k8s-postgresql-operator-validating-webhook-database"
+    grant: "k8s-postgresql-operator-validating-webhook-grant"
+    rolegroup: "k8s-postgresql-operator-validating-webhook-rolegroup"
+    schema: "k8s-postgresql-operator-validating-webhook-schema"
+
+# Kubernetes paths
+k8s:
+  tokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  namespacePath: "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+# Operator configuration
+operator:
+  enableLeaderElection: true
+  probeAddr: ":8081"
+  excludeUserList: "postgres"
+  postgresqlConnectionRetries: 3
+  postgresqlConnectionTimeoutSecs: 10
+  vaultAvailabilityRetries: 3
+  vaultAvailabilityRetryDelaySecs: 10
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 443
+  targetPort: 8443
+
+# RBAC configuration
+rbac:
+  create: true
+
+# CRDs are automatically installed from the crds/ directory
+# They are installed before templates are rendered
+
+# ValidatingWebhookConfiguration
+webhooks:
+  enabled: true
+  failurePolicy: Fail
+  sideEffects: None
+

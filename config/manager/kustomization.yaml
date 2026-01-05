@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: vyrodovalexey/k8s-postgresql-operator
-  newTag: "0.30"
+  newTag: "0.74"
