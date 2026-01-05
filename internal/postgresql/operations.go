@@ -25,6 +25,7 @@ import (
 
 	"github.com/lib/pq"
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	operrors "github.com/vyrodovalexey/k8s-postgresql-operator/internal/errors"
 )
 
 // CreateOrUpdateDatabase creates or updates a PostgreSQL database
@@ -54,7 +55,7 @@ func CreateOrUpdateDatabase(
 	err = db.QueryRowContext(connCtx,
 		"SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", databaseName).Scan(&exists)
 	if err != nil {
-		return fmt.Errorf("failed to check if database exists: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateDatabase.checkDatabaseExists")
 	}
 
 	if exists {
@@ -62,7 +63,7 @@ func CreateOrUpdateDatabase(
 		query := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", escapedDatabaseName, escapedOwner)
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
-			return fmt.Errorf("failed to update database owner: %w", err)
+			return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateDatabase.updateDatabaseOwner")
 		}
 		return nil
 	}
@@ -79,7 +80,7 @@ func CreateOrUpdateDatabase(
 	}
 	_, err = db.ExecContext(connCtx, query)
 	if err != nil {
-		return fmt.Errorf("failed to create database: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateDatabase.createDatabase")
 	}
 
 	// Create schema in the database if specified (and not "public" which is created by default)
@@ -93,7 +94,8 @@ func CreateOrUpdateDatabase(
 
 	dbSchema, err := sql.Open("postgres", connStr)
 	if err != nil {
-		return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
+		op := fmt.Sprintf("CreateOrUpdateDatabase.sql.Open(%s)", databaseName)
+		return operrors.Wrap(operrors.ErrPostgresqlConnectionFailed, err).WithOp(op)
 	}
 	defer dbSchema.Close()
 
@@ -106,7 +108,7 @@ func CreateOrUpdateDatabase(
 		"SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)",
 		schemaName).Scan(&schemaExists)
 	if err != nil {
-		return fmt.Errorf("failed to check if schema exists: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateDatabase.checkSchemaExists")
 	}
 
 	if !schemaExists {
@@ -117,7 +119,7 @@ func CreateOrUpdateDatabase(
 	query = fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", escapedSchemaName, escapedOwner)
 	_, err = dbSchema.ExecContext(connCtx, query)
 	if err != nil {
-		return fmt.Errorf("failed to update schema owner: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateDatabase.updateSchemaOwner")
 	}
 
 	return nil
@@ -135,7 +137,7 @@ func CreateOrUpdateUser(
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlConnectionFailed, err).WithOp("CreateOrUpdateUser.sql.Open")
 	}
 	defer db.Close()
 
@@ -150,7 +152,7 @@ func CreateOrUpdateUser(
 	var exists bool
 	err = db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM pg_user WHERE usename = $1)", username).Scan(&exists)
 	if err != nil {
-		return fmt.Errorf("failed to check if user exists: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateUser.checkUserExists")
 	}
 
 	if exists {
@@ -158,14 +160,14 @@ func CreateOrUpdateUser(
 		query := fmt.Sprintf("ALTER USER %s WITH PASSWORD '%s'", escapedUsername, escapedPassword)
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
-			return fmt.Errorf("failed to update user password: %w", err)
+			return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateUser.updateUserPassword")
 		}
 	} else {
 		// Create new user - PostgreSQL doesn't support parameters in CREATE USER
 		query := fmt.Sprintf("CREATE USER %s WITH PASSWORD '%s'", escapedUsername, escapedPassword)
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
-			return fmt.Errorf("failed to create user: %w", err)
+			return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateUser.createUser")
 		}
 	}
 
@@ -185,7 +187,7 @@ func CreateOrUpdateRoleGroup(
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlConnectionFailed, err).WithOp("CreateOrUpdateRoleGroup.sql.Open")
 	}
 	defer db.Close()
 
@@ -196,7 +198,8 @@ func CreateOrUpdateRoleGroup(
 	var exists bool
 	err = db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)", groupRole).Scan(&exists)
 	if err != nil {
-		return fmt.Errorf("failed to check if group role exists: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).
+			WithOp("CreateOrUpdateRoleGroup.checkGroupRoleExists")
 	}
 
 	if !exists {
@@ -204,7 +207,7 @@ func CreateOrUpdateRoleGroup(
 		query := fmt.Sprintf("CREATE ROLE %s", escapedGroupRole)
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
-			return fmt.Errorf("failed to create group role: %w", err)
+			return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateRoleGroup.createGroupRole")
 		}
 	}
 
@@ -217,7 +220,7 @@ func CreateOrUpdateRoleGroup(
 		JOIN pg_roles g ON g.oid = m.roleid 
 		WHERE g.rolname = $1`, groupRole)
 	if err != nil {
-		return fmt.Errorf("failed to query current members: %w", err)
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateRoleGroup.queryCurrentMembers")
 	}
 	defer rows.Close()
 
@@ -242,7 +245,8 @@ func CreateOrUpdateRoleGroup(
 			err = db.QueryRowContext(connCtx,
 				"SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)", memberRole).Scan(&memberExists)
 			if err != nil {
-				return fmt.Errorf("failed to check if member role exists: %w", err)
+				return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).
+					WithOp("CreateOrUpdateRoleGroup.checkMemberRoleExists")
 			}
 			if !memberExists {
 				// Skip non-existent members
@@ -254,7 +258,8 @@ func CreateOrUpdateRoleGroup(
 			query := fmt.Sprintf("GRANT %s TO %s", escapedGroupRole, escapedMemberRole)
 			_, err = db.ExecContext(connCtx, query)
 			if err != nil {
-				return fmt.Errorf("failed to add member %s to group role: %w", memberRole, err)
+				op := fmt.Sprintf("CreateOrUpdateRoleGroup.addMemberToGroup(%s)", memberRole)
+				return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp(op)
 			}
 		}
 	}

@@ -35,30 +35,7 @@ import (
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 )
 
-// MockVaultClient is a mock implementation of vault.Client for testing
-type MockVaultClient struct {
-	mock.Mock
-}
-
-func (m *MockVaultClient) GetPostgresqlCredentials(ctx context.Context, postgresqlID string) (string, string, error) {
-	args := m.Called(ctx, postgresqlID)
-	return args.String(0), args.String(1), args.Error(2)
-}
-
-func (m *MockVaultClient) GetPostgresqlUserCredentials(ctx context.Context, postgresqlID, username string) (string, error) {
-	args := m.Called(ctx, postgresqlID, username)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockVaultClient) StorePostgresqlUserCredentials(ctx context.Context, postgresqlID, username, password string) error {
-	args := m.Called(ctx, postgresqlID, username, password)
-	return args.Error(0)
-}
-
-func (m *MockVaultClient) StorePostgresqlCredentials(ctx context.Context, postgresqlID, username, password string) error {
-	args := m.Called(ctx, postgresqlID, username, password)
-	return args.Error(0)
-}
+// MockVaultClient is now defined in mocks.go
 
 func TestUserReconciler_Reconcile_NotFound(t *testing.T) {
 	mockClient := new(MockControllerClient)

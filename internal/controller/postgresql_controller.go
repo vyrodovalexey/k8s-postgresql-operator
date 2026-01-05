@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -186,42 +187,23 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
-// updateCondition updates or adds a condition to the Postgresql status
+// updateCondition updates or adds a condition to the Postgresql status using meta.SetStatusCondition
 // nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
 func updateCondition(
 	postgresql *instancev1alpha1.Postgresql, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	now := metav1.Now()
 	condition := metav1.Condition{
 		Type:               conditionType,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
-		LastTransitionTime: now,
 		ObservedGeneration: postgresql.Generation,
 	}
-
-	// Find and update existing condition or add new one
-	found := false
-	for i, c := range postgresql.Status.Conditions {
-		if c.Type == conditionType {
-			postgresql.Status.Conditions[i] = condition
-			found = true
-			break
-		}
-	}
-	if !found {
-		postgresql.Status.Conditions = append(postgresql.Status.Conditions, condition)
-	}
+	meta.SetStatusCondition(&postgresql.Status.Conditions, condition)
 }
 
-// findCondition finds a condition by type in the conditions slice
+// findCondition finds a condition by type in the conditions slice using meta.FindStatusCondition
 func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == conditionType {
-			return &conditions[i]
-		}
-	}
-	return nil
+	return meta.FindStatusCondition(conditions, conditionType)
 }
 
 // SetupWithManager sets up the controller with the Manager.
