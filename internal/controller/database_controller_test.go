@@ -31,6 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 )
 
@@ -127,7 +128,7 @@ func TestUpdateDatabaseCondition(t *testing.T) {
 	}
 
 	// Test adding new condition
-	updateDatabaseCondition(database, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
+	controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
 	assert.Len(t, database.Status.Conditions, 1)
 	assert.Equal(t, "Ready", database.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionTrue, database.Status.Conditions[0].Status)
@@ -135,7 +136,7 @@ func TestUpdateDatabaseCondition(t *testing.T) {
 	assert.Equal(t, "Test message", database.Status.Conditions[0].Message)
 
 	// Test updating existing condition
-	updateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "NewReason", "New message")
+	controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "NewReason", "New message")
 	assert.Len(t, database.Status.Conditions, 1)
 	assert.Equal(t, "Ready", database.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionFalse, database.Status.Conditions[0].Status)

@@ -152,7 +152,7 @@ func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlI
 	// For KV v1, use the path as-is
 	// Try KV v2 first (most common)
 	kv2Path := fmt.Sprintf("%s/%s/%s", c.vaultSecretPath, postgresqlID, username)
-	_, err := c.client.KVv2(c.vaultMountPoint).Put(context.Background(), kv2Path, data)
+	_, err := c.client.KVv2(c.vaultMountPoint).Put(ctx, kv2Path, data)
 
 	if err != nil {
 		// If KV v2 fails, try KV v1
