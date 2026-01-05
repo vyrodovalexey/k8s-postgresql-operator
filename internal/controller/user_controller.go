@@ -26,27 +26,16 @@ import (
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
-	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // UserReconciler reconciles a User object
 type UserReconciler struct {
-	client.Client
-	Scheme                      *runtime.Scheme
-	VaultClient                 *vault.Client
-	Log                         *zap.SugaredLogger
-	PostgresqlConnectionRetries int
-	PostgresqlConnectionTimeout time.Duration
-	VaultAvailabilityRetries    int
-	VaultAvailabilityRetryDelay time.Duration
+	BaseReconcilerConfig
 }
 
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users,verbs=get;list;watch

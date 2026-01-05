@@ -65,12 +65,14 @@ func TestUserReconciler_Reconcile_NotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	req := ctrl.Request{
@@ -94,12 +96,14 @@ func TestUserReconciler_FindPostgresqlByID_Success(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	postgresqlID := "test-id-123"
@@ -142,12 +146,14 @@ func TestUserReconciler_FindPostgresqlByID_NotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	postgresqlList := &instancev1alpha1.PostgresqlList{
@@ -215,12 +221,14 @@ func TestUserReconciler_Reconcile_GetError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	req := ctrl.Request{
@@ -246,12 +254,14 @@ func TestUserReconciler_Reconcile_PostgresqlNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	user := &instancev1alpha1.User{
@@ -301,12 +311,14 @@ func TestUserReconciler_Reconcile_PostgresqlNotConnected(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	user := &instancev1alpha1.User{
@@ -374,12 +386,14 @@ func TestUserReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	user := &instancev1alpha1.User{
@@ -446,12 +460,14 @@ func TestUserReconciler_FindPostgresqlByID_ListError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &UserReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	mockClient.On("List", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("list error"))

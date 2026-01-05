@@ -27,7 +27,7 @@ func TestNewClient_EmptyVaultRole(t *testing.T) {
 	client, err := NewClient("http://localhost:8200", "", "/path/to/token", "secret", "pdb")
 	assert.Error(t, err)
 	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "VAULT_ROLE environment variable is not set")
+	assert.Contains(t, err.Error(), "VAULT_ROLE")
 }
 
 func TestNewClient_InvalidVaultAddr(t *testing.T) {

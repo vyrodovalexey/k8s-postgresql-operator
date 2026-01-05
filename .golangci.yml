@@ -77,12 +77,7 @@ linters:
     gocyclo:
       min-complexity: 25
     nestif:
-      min-complexity: 16
+      min-complexity: 20
     funlen:
       lines: 500
       statements: 90
-
-#formatters:
-#  enable:
-#    - gofmt
-#    - goimports

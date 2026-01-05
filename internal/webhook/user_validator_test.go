@@ -41,15 +41,17 @@ func TestUserValidator_Handle_NoPostgresqlID(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	user := &instancev1alpha1.User{
@@ -81,15 +83,17 @@ func TestUserValidator_Handle_NoUsername(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	user := &instancev1alpha1.User{
@@ -122,15 +126,17 @@ func TestUserValidator_Handle_ExcludedUser(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{"postgres", "admin"},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{"postgres", "admin"},
 	}
 
 	user := &instancev1alpha1.User{
@@ -163,15 +169,17 @@ func TestUserValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	user := &instancev1alpha1.User{
@@ -209,15 +217,17 @@ func TestUserValidator_Handle_DuplicateUser(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	postgresqlID := "pg-1"
@@ -287,15 +297,17 @@ func TestUserValidator_Handle_NoDuplicate(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	postgresqlID := "pg-1"
@@ -363,15 +375,17 @@ func TestUserValidator_Handle_UpdateSameResource(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	postgresqlID := "pg-1"
@@ -441,15 +455,17 @@ func TestUserValidator_Handle_DecodeError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	req := admission.Request{
@@ -471,15 +487,17 @@ func TestUserValidator_Handle_PostgresqlListError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	user := &instancev1alpha1.User{
@@ -515,15 +533,17 @@ func TestUserValidator_Handle_UserListError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &UserValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
-		ExcludeUserList:             []string{},
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+		ExcludeUserList: []string{},
 	}
 
 	user := &instancev1alpha1.User{

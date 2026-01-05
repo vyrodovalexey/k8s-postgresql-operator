@@ -101,7 +101,7 @@ func (c *Collector) collectPostgresqls(ctx context.Context) error {
 		postgresqlIDCounts[postgresqlID]++
 		key := "postgresql:" + postgresqlID + ":" + pg.Name + ":" + pg.Namespace
 		currentObjects[key] = true
-		SetObjectInfo("postgresql", postgresqlID, pg.Name, pg.Namespace)
+		SetObjectInfo("postgresql", postgresqlID, pg.Name, pg.Namespace, "", "")
 	}
 
 	// Update counts per postgresqlID
@@ -126,7 +126,7 @@ func (c *Collector) collectUsers(ctx context.Context) error {
 	for _, user := range userList.Items {
 		postgresqlID := user.Spec.PostgresqlID
 		postgresqlIDCounts[postgresqlID]++
-		SetObjectInfo("user", postgresqlID, user.Name, user.Namespace)
+		SetObjectInfo("user", postgresqlID, user.Name, user.Namespace, "", user.Spec.Username)
 	}
 
 	// Update counts per postgresqlID
@@ -148,7 +148,7 @@ func (c *Collector) collectDatabases(ctx context.Context) error {
 	for _, db := range databaseList.Items {
 		postgresqlID := db.Spec.PostgresqlID
 		postgresqlIDCounts[postgresqlID]++
-		SetObjectInfo("database", postgresqlID, db.Name, db.Namespace)
+		SetObjectInfo("database", postgresqlID, db.Name, db.Namespace, db.Spec.Database, "")
 	}
 
 	// Update counts per postgresqlID
@@ -170,7 +170,7 @@ func (c *Collector) collectGrants(ctx context.Context) error {
 	for _, grant := range grantList.Items {
 		postgresqlID := grant.Spec.PostgresqlID
 		postgresqlIDCounts[postgresqlID]++
-		SetObjectInfo("grant", postgresqlID, grant.Name, grant.Namespace)
+		SetObjectInfo("grant", postgresqlID, grant.Name, grant.Namespace, "", "")
 	}
 
 	// Update counts per postgresqlID
@@ -192,7 +192,7 @@ func (c *Collector) collectRoleGroups(ctx context.Context) error {
 	for _, rg := range roleGroupList.Items {
 		postgresqlID := rg.Spec.PostgresqlID
 		postgresqlIDCounts[postgresqlID]++
-		SetObjectInfo("rolegroup", postgresqlID, rg.Name, rg.Namespace)
+		SetObjectInfo("rolegroup", postgresqlID, rg.Name, rg.Namespace, "", "")
 	}
 
 	// Update counts per postgresqlID
@@ -214,7 +214,7 @@ func (c *Collector) collectSchemas(ctx context.Context) error {
 	for _, schema := range schemaList.Items {
 		postgresqlID := schema.Spec.PostgresqlID
 		postgresqlIDCounts[postgresqlID]++
-		SetObjectInfo("schema", postgresqlID, schema.Name, schema.Namespace)
+		SetObjectInfo("schema", postgresqlID, schema.Name, schema.Namespace, "", "")
 	}
 
 	// Update counts per postgresqlID

@@ -89,9 +89,9 @@ func TestConfig_DefaultValues(t *testing.T) {
 	assert.Equal(t, "/var/run/secrets/kubernetes.io/serviceaccount/namespace", cfg.K8sNamespacePath)
 	assert.Equal(t, "postgres", cfg.ExcludeUserList)
 	assert.Equal(t, 3, cfg.PostgresqlConnectionRetries)
-	assert.Equal(t, 5, cfg.PostgresqlConnectionTimeoutSecs)
-	assert.Equal(t, 5*time.Second, cfg.PostgresqlConnectionTimeout())
+	assert.Equal(t, 10, cfg.PostgresqlConnectionTimeoutSecs)
+	assert.Equal(t, 10*time.Second, cfg.PostgresqlConnectionTimeout())
 	assert.Equal(t, 3, cfg.VaultAvailabilityRetries)
-	assert.Equal(t, 5, cfg.VaultAvailabilityRetryDelaySecs)
-	assert.Equal(t, 5*time.Second, cfg.VaultAvailabilityRetryDelay())
+	assert.Equal(t, 10, cfg.VaultAvailabilityRetryDelaySecs)
+	assert.Equal(t, 10*time.Second, cfg.VaultAvailabilityRetryDelay())
 }

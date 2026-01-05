@@ -45,7 +45,7 @@ var (
 			Name: "postgresql_operator_object_info",
 			Help: "Information about objects (name, namespace) per kind and postgresqlID. Value is always 1.",
 		},
-		[]string{"kind", "postgresql_id", "name", "namespace"},
+		[]string{"kind", "postgresql_id", "name", "namespace", "databasename", "username"},
 	)
 )
 
@@ -67,13 +67,15 @@ func UpdateObjectCount(kind, postgresqlID string, count float64) {
 }
 
 // SetObjectInfo sets the info metric for an object (value is always 1)
-func SetObjectInfo(kind, postgresqlID, name, namespace string) {
-	ObjectNames.WithLabelValues(kind, postgresqlID, name, namespace).Set(1)
+// databasename and username are optional labels (empty string for non-applicable kinds)
+func SetObjectInfo(kind, postgresqlID, name, namespace, databasename, username string) {
+	ObjectNames.WithLabelValues(kind, postgresqlID, name, namespace, databasename, username).Set(1)
 }
 
 // RemoveObjectInfo removes the info metric for an object
-func RemoveObjectInfo(kind, postgresqlID, name, namespace string) {
-	ObjectNames.DeleteLabelValues(kind, postgresqlID, name, namespace)
+// databasename and username are optional labels (empty string for non-applicable kinds)
+func RemoveObjectInfo(kind, postgresqlID, name, namespace, databasename, username string) {
+	ObjectNames.DeleteLabelValues(kind, postgresqlID, name, namespace, databasename, username)
 }
 
 // RemoveObjectCount removes the count metric for a specific kind and postgresqlID

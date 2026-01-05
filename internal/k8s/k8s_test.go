@@ -132,7 +132,7 @@ func TestUpdateWebhookConfigurationWithCABundle_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create rest config (we'll use a minimal config for testing)
-	config := &rest.Config{
+	restConfig := &rest.Config{
 		Host: "https://test",
 	}
 
@@ -142,7 +142,7 @@ func TestUpdateWebhookConfigurationWithCABundle_Success(t *testing.T) {
 
 	// Since we can't easily mock the rest.Config -> clientset conversion,
 	// we'll test the error path instead
-	err = UpdateWebhookConfigurationWithCABundle(secretName, namespace, config, webhookConfigName, logger)
+	err = UpdateWebhookConfigurationWithCABundle(secretName, namespace, restConfig, webhookConfigName, logger)
 	// This will fail because we can't create a real client from the fake config
 	// but we can verify the function handles the error
 	assert.Error(t, err)
@@ -173,10 +173,10 @@ func TestUpdateWebhookConfigurationWithCABundle_SecretNotFound(t *testing.T) {
 		context.Background(), webhookConfig, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	config := &rest.Config{Host: "https://test"}
+	restConfig := &rest.Config{Host: "https://test"}
 	logger := zap.NewNop().Sugar()
 
-	err = UpdateWebhookConfigurationWithCABundle(secretName, namespace, config, webhookConfigName, logger)
+	err = UpdateWebhookConfigurationWithCABundle(secretName, namespace, restConfig, webhookConfigName, logger)
 	assert.Error(t, err)
 }
 
@@ -216,9 +216,9 @@ func TestUpdateWebhookConfigurationWithCABundle_MissingCABundle(t *testing.T) {
 		context.Background(), webhookConfig, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	config := &rest.Config{Host: "https://test"}
+	restConfig := &rest.Config{Host: "https://test"}
 	logger := zap.NewNop().Sugar()
 
-	err = UpdateWebhookConfigurationWithCABundle(secretName, namespace, config, webhookConfigName, logger)
+	err = UpdateWebhookConfigurationWithCABundle(secretName, namespace, restConfig, webhookConfigName, logger)
 	assert.Error(t, err)
 }

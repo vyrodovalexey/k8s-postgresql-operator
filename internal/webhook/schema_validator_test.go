@@ -37,14 +37,16 @@ func TestSchemaValidator_Handle_NoPostgresqlID(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &SchemaValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	schema := &instancev1alpha1.Schema{
@@ -76,14 +78,16 @@ func TestSchemaValidator_Handle_NoSchemaName(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &SchemaValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	schema := &instancev1alpha1.Schema{
@@ -116,14 +120,16 @@ func TestSchemaValidator_Handle_NoOwner(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &SchemaValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	schema := &instancev1alpha1.Schema{
@@ -157,14 +163,16 @@ func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &SchemaValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	postgresqlID := "pg-1"
@@ -236,14 +244,16 @@ func TestSchemaValidator_Handle_NoDuplicate(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &SchemaValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	postgresqlID := "pg-1"
@@ -313,14 +323,16 @@ func TestSchemaValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &SchemaValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	schema := &instancev1alpha1.Schema{
@@ -359,14 +371,16 @@ func TestSchemaValidator_Handle_DecodeError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	validator := &SchemaValidator{
-		Client:                      mockClient,
-		Decoder:                     mockDecoder,
-		Log:                         logger,
-		VaultClient:                 nil,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	req := admission.Request{

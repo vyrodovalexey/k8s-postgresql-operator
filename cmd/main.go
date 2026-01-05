@@ -44,8 +44,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
+	webhookpkg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -104,7 +107,7 @@ func main() {
 	// Define webhooks
 	webhookNames := cfg.SetupWebhooksList()
 	// Setup webhook certificates
-	webhookCertPath, webhookKeyPath := setupWebhookCertificates(cfg, webhookNames, lg)
+	webhookCertPath, webhookKeyPath := k8sclient.SetupWebhookCertificates(cfg, webhookNames, lg)
 
 	// Initialize webhook certificate watcher
 	var err error
@@ -169,7 +172,7 @@ func main() {
 	}
 
 	// Setup all controllers
-	if err := setupControllers(mgr, cfg, vaultClient, lg); err != nil {
+	if err := controller.SetupControllers(mgr, cfg, vaultClient, lg); err != nil {
 		lg.Error(err, "unable to setup controllers")
 		os.Exit(1)
 	}
@@ -207,7 +210,9 @@ func main() {
 	}
 
 	// Register webhooks
-	if err := registerWebhooks(mgr, webhookServer, webhookDecoder, cfg, vaultClient, excludeUserList, lg); err != nil {
+	if err := webhookpkg.RegisterWebhooks(
+		mgr, webhookServer, webhookDecoder, cfg, vaultClient, excludeUserList, lg,
+	); err != nil {
 		lg.Error(err, "unable to register webhooks")
 		os.Exit(1)
 	}

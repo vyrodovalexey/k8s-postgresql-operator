@@ -20,12 +20,17 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
 )
 
 // GetCurrentNamespace discovers the current namespace from the service account
@@ -45,8 +50,8 @@ func GetCurrentNamespace(namespaceFile string) string {
 
 // UpdateWebhookConfigurationWithCABundle updates the ValidatingWebhookConfiguration with the CA bundle from the secret
 func UpdateWebhookConfigurationWithCABundle(
-	secretName, namespace string, config *rest.Config, webHookName string, lg *zap.SugaredLogger) error {
-	clientset, err := kubernetes.NewForConfig(config)
+	secretName, namespace string, restConfig *rest.Config, webHookName string, lg *zap.SugaredLogger) error {
+	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
@@ -95,4 +100,63 @@ func UpdateWebhookConfigurationWithCABundle(
 	}
 
 	return nil
+}
+
+// SetupWebhookCertificates sets up webhook certificates either from provided paths or by generating them
+func SetupWebhookCertificates(
+	cfg *config.Config, webhookNames []string, lg *zap.SugaredLogger,
+) (webhookCertPath, webhookKeyPath string) {
+	// Generate or use provided webhook certificates
+	if cfg.WebhookCertPath != "" {
+		// Use provided certificates
+		webhookCertPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertName)
+		webhookKeyPath = filepath.Join(cfg.WebhookCertPath, cfg.WebhookCertKey)
+		lg.Infow("Using provided webhook certificates",
+			"webhook-cert-path", cfg.WebhookCertPath,
+			"webhook-cert-name", cfg.WebhookCertName,
+			"webhook-cert-key", cfg.WebhookCertKey)
+	} else {
+		// Generate self-signed certificates and store in Kubernetes Secret
+		tempCertDir, err := os.MkdirTemp("", "webhook-certs-")
+		if err != nil {
+			lg.Error(err, "Failed to create temporary directory for webhook certificates")
+			os.Exit(1)
+		}
+		lg.Infow("Generating self-signed webhook certificates and storing in Secret", "cert-dir", tempCertDir)
+
+		// Discover current namespace
+		namespace := GetCurrentNamespace(cfg.K8sNamespacePath)
+
+		secretName := fmt.Sprintf("%s-webhook-cert", cfg.WebhookK8sServiceName)
+
+		// Get Kubernetes config
+		restConfig := ctrl.GetConfigOrDie()
+		_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(
+			cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, restConfig)
+		if err != nil {
+			lg.Error(err, "Failed to generate self-signed webhook certificates")
+			os.Exit(1)
+		}
+		lg.Infow("Webhook certificates generated and stored in Secret",
+			"secret-name", secretName,
+			"cert-path", webhookCertPath,
+			"key-path", webhookKeyPath)
+
+		// Update all ValidatingWebhookConfigurations with CA bundle from secret
+		for _, webhookName := range webhookNames {
+			if err := UpdateWebhookConfigurationWithCABundle(
+				secretName, namespace, restConfig, webhookName, lg); err != nil {
+				lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle",
+					"secret-name", secretName,
+					"webhook-name", webhookName)
+				// Don't exit, as the webhook might still work if the CA bundle is set manually
+			} else {
+				lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle",
+					"secret-name", secretName,
+					"webhook-name", webhookName)
+			}
+		}
+	}
+
+	return webhookCertPath, webhookKeyPath
 }

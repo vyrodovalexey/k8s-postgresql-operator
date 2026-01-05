@@ -21,28 +21,16 @@ import (
 	"fmt"
 	"net/http"
 
-	"go.uber.org/zap"
 	admissionv1 "k8s.io/api/admission/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-
-	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
 // PostgresqlValidator validates PostgreSQL resources
 type PostgresqlValidator struct {
-	Client                      client.Client
-	Decoder                     admission.Decoder
-	Log                         *zap.SugaredLogger
-	VaultClient                 *vault.Client
-	PostgresqlConnectionRetries int
-	PostgresqlConnectionTimeout time.Duration
-	VaultAvailabilityRetries    int
-	VaultAvailabilityRetryDelay time.Duration
+	BaseValidatorConfig
 }
 
 // Handle handles the admission request for PostgreSQL resources

@@ -170,12 +170,14 @@ func TestPostgresqlReconciler_Reconcile_NotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &PostgresqlReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	req := ctrl.Request{
@@ -199,12 +201,14 @@ func TestPostgresqlReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &PostgresqlReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	postgresql := &instancev1alpha1.Postgresql{
@@ -293,12 +297,14 @@ func TestPostgresqlReconciler_Reconcile_GetError(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &PostgresqlReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	req := ctrl.Request{
@@ -323,13 +329,15 @@ func TestPostgresqlReconciler_Reconcile_WithExternalInstance(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &PostgresqlReconciler{
-		Client:                      mockClient,
-		VaultClient:                 nil, // No vault client for this test
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			VaultClient:                 nil, // No vault client for this test
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	postgresql := &instancev1alpha1.Postgresql{

@@ -39,12 +39,14 @@ func TestSchemaReconciler_Reconcile_NotFound(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &SchemaReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	req := ctrl.Request{
@@ -68,12 +70,14 @@ func TestSchemaReconciler_FindPostgresqlByID_Success(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	reconciler := &SchemaReconciler{
-		Client:                      mockClient,
-		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         logger,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
 	}
 
 	postgresqlID := "test-id-123"

@@ -166,10 +166,18 @@ func TestSetObjectInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			SetObjectInfo(tt.kind, tt.postgresqlID, tt.objName, tt.namespace)
+			var databasename, username string
+			if tt.kind == "database" {
+				databasename = "testdb"
+			} else if tt.kind == "user" {
+				username = "testuser"
+			}
+			SetObjectInfo(tt.kind, tt.postgresqlID, tt.objName, tt.namespace, databasename, username)
 
 			metric := &dto.Metric{}
-			err := ObjectNames.WithLabelValues(tt.kind, tt.postgresqlID, tt.objName, tt.namespace).Write(metric)
+			err := ObjectNames.WithLabelValues(
+				tt.kind, tt.postgresqlID, tt.objName, tt.namespace, databasename, username,
+			).Write(metric)
 			require.NoError(t, err)
 			assert.Equal(t, float64(1), *metric.Gauge.Value)
 		})
@@ -186,20 +194,20 @@ func TestRemoveObjectInfo(t *testing.T) {
 	namespace := "default"
 
 	// First set the metric
-	SetObjectInfo(kind, postgresqlID, objName, namespace)
+	SetObjectInfo(kind, postgresqlID, objName, namespace, "", "testuser")
 
 	// Verify it exists
 	metric := &dto.Metric{}
-	err := ObjectNames.WithLabelValues(kind, postgresqlID, objName, namespace).Write(metric)
+	err := ObjectNames.WithLabelValues(kind, postgresqlID, objName, namespace, "", "testuser").Write(metric)
 	require.NoError(t, err)
 	assert.Equal(t, float64(1), *metric.Gauge.Value)
 
 	// Remove it
-	RemoveObjectInfo(kind, postgresqlID, objName, namespace)
+	RemoveObjectInfo(kind, postgresqlID, objName, namespace, "", "testuser")
 
 	// Verify it's removed (should return an error or zero value)
 	metric2 := &dto.Metric{}
-	err2 := ObjectNames.WithLabelValues(kind, postgresqlID, objName, namespace).Write(metric2)
+	err2 := ObjectNames.WithLabelValues(kind, postgresqlID, objName, namespace, "", "testuser").Write(metric2)
 	// After deletion, the metric might still exist but with a zero value or error
 	// The behavior depends on Prometheus implementation
 	if err2 == nil {
@@ -259,7 +267,7 @@ func TestMetricsRegistration(t *testing.T) {
 	assert.NotNil(t, metric2)
 
 	metric3 := &dto.Metric{}
-	err3 := ObjectNames.WithLabelValues("test", "test", "test", "test").Write(metric3)
+	err3 := ObjectNames.WithLabelValues("test", "test", "test", "test", "", "").Write(metric3)
 	require.NoError(t, err3)
 	assert.NotNil(t, metric3)
 }
@@ -291,12 +299,12 @@ func TestMultipleUpdates(t *testing.T) {
 	assert.Equal(t, float64(3), *metric2.Gauge.Value)
 
 	// Set object info multiple times (should always be 1)
-	SetObjectInfo("user", "pg-1", "user1", "default")
-	SetObjectInfo("user", "pg-1", "user1", "default")
-	SetObjectInfo("user", "pg-1", "user1", "default")
+	SetObjectInfo("user", "pg-1", "user1", "default", "", "testuser")
+	SetObjectInfo("user", "pg-1", "user1", "default", "", "testuser")
+	SetObjectInfo("user", "pg-1", "user1", "default", "", "testuser")
 
 	metric3 := &dto.Metric{}
-	err3 := ObjectNames.WithLabelValues("user", "pg-1", "user1", "default").Write(metric3)
+	err3 := ObjectNames.WithLabelValues("user", "pg-1", "user1", "default", "", "testuser").Write(metric3)
 	require.NoError(t, err3)
 	assert.Equal(t, float64(1), *metric3.Gauge.Value)
 }
@@ -338,7 +346,7 @@ func TestConcurrentUpdates(t *testing.T) {
 	// Concurrent updates to ObjectNames
 	for i := 0; i < 10; i++ {
 		go func(name string) {
-			SetObjectInfo("user", "pg-1", name, "default")
+			SetObjectInfo("user", "pg-1", name, "default", "", "testuser")
 			done <- true
 		}("user" + string(rune(i)))
 	}
