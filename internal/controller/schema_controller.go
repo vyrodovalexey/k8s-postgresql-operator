@@ -25,6 +25,7 @@ import (
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -148,31 +149,18 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
-// updateSchemaCondition updates or adds a condition to the Schema status
+// updateSchemaCondition updates or adds a condition to the Schema status using meta.SetStatusCondition
 // nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
 func updateSchemaCondition(
 	schema *instancev1alpha1.Schema, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	now := metav1.Now()
 	condition := metav1.Condition{
 		Type:               conditionType,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
-		LastTransitionTime: now,
 		ObservedGeneration: schema.Generation,
 	}
-
-	found := false
-	for i, c := range schema.Status.Conditions {
-		if c.Type == conditionType {
-			schema.Status.Conditions[i] = condition
-			found = true
-			break
-		}
-	}
-	if !found {
-		schema.Status.Conditions = append(schema.Status.Conditions, condition)
-	}
+	meta.SetStatusCondition(&schema.Status.Conditions, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager.

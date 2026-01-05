@@ -81,12 +81,14 @@ func TestUpdateCondition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := UpdateCondition(
-				tt.conditions, tt.generation, tt.conditionType, tt.status, tt.reason, tt.message)
-			assert.Len(t, result, tt.expectedLen)
+			conditions := make([]metav1.Condition, len(tt.conditions))
+			copy(conditions, tt.conditions)
+			UpdateCondition(
+				&conditions, tt.generation, tt.conditionType, tt.status, tt.reason, tt.message)
+			assert.Len(t, conditions, tt.expectedLen)
 
 			found := false
-			for _, c := range result {
+			for _, c := range conditions {
 				if c.Type == tt.conditionType {
 					found = true
 					assert.Equal(t, tt.status, c.Status)
