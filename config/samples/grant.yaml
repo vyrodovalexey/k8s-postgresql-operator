@@ -1,3 +1,24 @@
+---
+apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
+kind: User
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-postgresql-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: user-sample-reader
+spec:
+  # Username is the PostgreSQL username to create
+  username: "myuser-reader"
+
+  # Regenerate password
+  updatePassword: false
+
+  # PostgresqlID is the ID of the PostgreSQL instance where this user should be created
+  # This must match the postgresqlID in the Postgresql CRD
+  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+
+---
 apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
 kind: Grant
 metadata:
@@ -8,7 +29,7 @@ metadata:
 spec:
   # Role is the PostgreSQL role/user to grant permissions to
   # This user must exist in PostgreSQL (can be created via User CRD)
-  role: "myapp_readonly"
+  role: "myuser-reader"
   
   # Database is the PostgreSQL database name where grants should be applied
   database: "mydatabase"

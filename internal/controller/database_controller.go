@@ -40,7 +40,7 @@ type DatabaseReconciler struct {
 	BaseReconcilerConfig
 }
 
-// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases/status,verbs=get;update;patch
 //nolint:lll // kubebuilder directive cannot be split
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=databases/finalizers,verbs=update
