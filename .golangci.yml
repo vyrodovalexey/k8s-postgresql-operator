@@ -74,10 +74,6 @@ linters:
           sizeThreshold: 512
         rangeValCopy:
           sizeThreshold: 512
-    gocyclo:
-      min-complexity: 25
-    nestif:
-      min-complexity: 20
     funlen:
       lines: 500
       statements: 90

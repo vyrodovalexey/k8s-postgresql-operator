@@ -250,24 +250,7 @@ func (r *DatabaseReconciler) handleDeletion(
 	}
 
 	var postgresUsername, postgresPassword string
-	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
-			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
-		if err != nil {
-			r.Log.Error(err, "Failed to get credentials from Vault during deletion",
-				"postgresqlID", externalInstance.PostgresqlID)
-			// Remove finalizer even if credentials not available
-			database.Finalizers = removeString(database.Finalizers, databaseFinalizerName)
-			if err := r.Update(ctx, database); err != nil {
-				r.Log.Error(err, "Failed to remove finalizer")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
-		}
-		postgresUsername = vaultUsername
-		postgresPassword = vaultPassword
-	} else {
+	if r.VaultClient == nil {
 		r.Log.Warnw("Vault client not available during deletion, cannot delete database from PostgreSQL")
 		// Remove finalizer even if Vault not available
 		database.Finalizers = removeString(database.Finalizers, databaseFinalizerName)
@@ -277,6 +260,23 @@ func (r *DatabaseReconciler) handleDeletion(
 		}
 		return ctrl.Result{}, nil
 	}
+
+	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+		ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
+		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+	if err != nil {
+		r.Log.Error(err, "Failed to get credentials from Vault during deletion",
+			"postgresqlID", externalInstance.PostgresqlID)
+		// Remove finalizer even if credentials not available
+		database.Finalizers = removeString(database.Finalizers, databaseFinalizerName)
+		if err := r.Update(ctx, database); err != nil {
+			r.Log.Error(err, "Failed to remove finalizer")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+	postgresUsername = vaultUsername
+	postgresPassword = vaultPassword
 
 	// Delete database from PostgreSQL with retry logic
 	err = pg.ExecuteOperationWithRetry(ctx, func() error {

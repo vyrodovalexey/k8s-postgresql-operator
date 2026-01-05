@@ -61,31 +61,8 @@ func GenerateSelfSignedCertAndStoreInSecret(
 	// Check if secret already exists
 	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err == nil && secret != nil {
-		// Secret exists, check if it has the required keys
-		if certData, ok := secret.Data["tls.crt"]; ok {
-			if keyData, ok := secret.Data["tls.key"]; ok {
-				// Write certificate to file
-				certFile, err := os.Create(certPath) //nolint:gosec  //microservices approach
-				if err != nil {
-					return "", "", "", fmt.Errorf("failed to create cert file: %w", err)
-				}
-				defer certFile.Close()
-				if _, err := certFile.Write(certData); err != nil {
-					return "", "", "", fmt.Errorf("failed to write certificate: %w", err)
-				}
-
-				// Write private key to file
-				keyFile, err := os.Create(keyPath) //nolint:gosec // microservices approach
-				if err != nil {
-					return "", "", "", fmt.Errorf("failed to create key file: %w", err)
-				}
-				defer keyFile.Close()
-				if _, err := keyFile.Write(keyData); err != nil {
-					return "", "", "", fmt.Errorf("failed to write private key: %w", err)
-				}
-
-				return secretName, certPath, keyPath, nil
-			}
+		if certPath, keyPath, ok := writeCertFromSecret(secret, certPath, keyPath); ok {
+			return secretName, certPath, keyPath, nil
 		}
 	}
 
@@ -180,6 +157,37 @@ func GenerateSelfSignedCertAndStoreInSecret(
 	}
 
 	return secretName, certPath, keyPath, nil
+}
+
+// writeCertFromSecret writes certificate and key from secret to files
+func writeCertFromSecret(secret *corev1.Secret, certPath, keyPath string) (outCertPath, outKeyPath string, ok bool) {
+	certData, certOk := secret.Data["tls.crt"]
+	keyData, keyOk := secret.Data["tls.key"]
+	if !certOk || !keyOk {
+		return "", "", false
+	}
+
+	// Write certificate to file
+	certFile, err := os.Create(certPath) //nolint:gosec  //microservices approach
+	if err != nil {
+		return "", "", false
+	}
+	defer certFile.Close()
+	if _, err := certFile.Write(certData); err != nil {
+		return "", "", false
+	}
+
+	// Write private key to file
+	keyFile, err := os.Create(keyPath) //nolint:gosec // microservices approach
+	if err != nil {
+		return "", "", false
+	}
+	defer keyFile.Close()
+	if _, err := keyFile.Write(keyData); err != nil {
+		return "", "", false
+	}
+
+	return certPath, keyPath, true
 }
 
 // LoadCert loads a certificate and key from files

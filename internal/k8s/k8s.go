@@ -115,47 +115,48 @@ func SetupWebhookCertificates(
 			"webhook-cert-path", cfg.WebhookCertPath,
 			"webhook-cert-name", cfg.WebhookCertName,
 			"webhook-cert-key", cfg.WebhookCertKey)
-	} else {
-		// Generate self-signed certificates and store in Kubernetes Secret
-		tempCertDir, err := os.MkdirTemp("", "webhook-certs-")
-		if err != nil {
-			lg.Error(err, "Failed to create temporary directory for webhook certificates")
-			os.Exit(1)
+		return webhookCertPath, webhookKeyPath
+	}
+
+	// Generate self-signed certificates and store in Kubernetes Secret
+	tempCertDir, err := os.MkdirTemp("", "webhook-certs-")
+	if err != nil {
+		lg.Error(err, "Failed to create temporary directory for webhook certificates")
+		os.Exit(1)
+	}
+	lg.Infow("Generating self-signed webhook certificates and storing in Secret", "cert-dir", tempCertDir)
+
+	// Discover current namespace
+	namespace := GetCurrentNamespace(cfg.K8sNamespacePath)
+
+	secretName := fmt.Sprintf("%s-webhook-cert", cfg.WebhookK8sServiceName)
+
+	// Get Kubernetes config
+	restConfig := ctrl.GetConfigOrDie()
+	_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(
+		cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, restConfig)
+	if err != nil {
+		lg.Error(err, "Failed to generate self-signed webhook certificates")
+		os.Exit(1)
+	}
+	lg.Infow("Webhook certificates generated and stored in Secret",
+		"secret-name", secretName,
+		"cert-path", webhookCertPath,
+		"key-path", webhookKeyPath)
+
+	// Update all ValidatingWebhookConfigurations with CA bundle from secret
+	for _, webhookName := range webhookNames {
+		if err := UpdateWebhookConfigurationWithCABundle(
+			secretName, namespace, restConfig, webhookName, lg); err != nil {
+			lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle",
+				"secret-name", secretName,
+				"webhook-name", webhookName)
+			// Don't exit, as the webhook might still work if the CA bundle is set manually
+			continue
 		}
-		lg.Infow("Generating self-signed webhook certificates and storing in Secret", "cert-dir", tempCertDir)
-
-		// Discover current namespace
-		namespace := GetCurrentNamespace(cfg.K8sNamespacePath)
-
-		secretName := fmt.Sprintf("%s-webhook-cert", cfg.WebhookK8sServiceName)
-
-		// Get Kubernetes config
-		restConfig := ctrl.GetConfigOrDie()
-		_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(
-			cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, restConfig)
-		if err != nil {
-			lg.Error(err, "Failed to generate self-signed webhook certificates")
-			os.Exit(1)
-		}
-		lg.Infow("Webhook certificates generated and stored in Secret",
+		lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle",
 			"secret-name", secretName,
-			"cert-path", webhookCertPath,
-			"key-path", webhookKeyPath)
-
-		// Update all ValidatingWebhookConfigurations with CA bundle from secret
-		for _, webhookName := range webhookNames {
-			if err := UpdateWebhookConfigurationWithCABundle(
-				secretName, namespace, restConfig, webhookName, lg); err != nil {
-				lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle",
-					"secret-name", secretName,
-					"webhook-name", webhookName)
-				// Don't exit, as the webhook might still work if the CA bundle is set manually
-			} else {
-				lg.Infow("Successfully updated ValidatingWebhookConfiguration with CA bundle",
-					"secret-name", secretName,
-					"webhook-name", webhookName)
-			}
-		}
+			"webhook-name", webhookName)
 	}
 
 	return webhookCertPath, webhookKeyPath

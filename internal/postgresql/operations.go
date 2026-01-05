@@ -20,10 +20,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/lib/pq"
-	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
+	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 )
 
 // CreateOrUpdateDatabase creates or updates a PostgreSQL database
@@ -63,55 +64,60 @@ func CreateOrUpdateDatabase(
 		if err != nil {
 			return fmt.Errorf("failed to update database owner: %w", err)
 		}
+		return nil
+	}
+
+	// Create new database
+	var query string
+	if templateDatabase != "" {
+		// Create database from template
+		escapedTemplate := pq.QuoteIdentifier(templateDatabase)
+		query = fmt.Sprintf("CREATE DATABASE %s OWNER %s TEMPLATE %s", escapedDatabaseName, escapedOwner, escapedTemplate)
 	} else {
-		// Create new database
-		var query string
-		if templateDatabase != "" {
-			// Create database from template
-			escapedTemplate := pq.QuoteIdentifier(templateDatabase)
-			query = fmt.Sprintf("CREATE DATABASE %s OWNER %s TEMPLATE %s", escapedDatabaseName, escapedOwner, escapedTemplate)
-		} else {
-			// Create database normally
-			query = fmt.Sprintf("CREATE DATABASE %s OWNER %s", escapedDatabaseName, escapedOwner)
-		}
-		_, err = db.ExecContext(connCtx, query)
-		if err != nil {
-			return fmt.Errorf("failed to create database: %w", err)
-		}
+		// Create database normally
+		query = fmt.Sprintf("CREATE DATABASE %s OWNER %s", escapedDatabaseName, escapedOwner)
+	}
+	_, err = db.ExecContext(connCtx, query)
+	if err != nil {
+		return fmt.Errorf("failed to create database: %w", err)
 	}
 
 	// Create schema in the database if specified (and not "public" which is created by default)
-	if schemaName != "" && schemaName != "public" {
-		// Connect to the newly created database
-		connStr = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-			host, port, adminUser, adminPassword, databaseName, sslMode)
+	if schemaName == "" || schemaName == "public" {
+		return nil
+	}
 
-		dbSchema, err := sql.Open("postgres", connStr)
-		if err != nil {
-			return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
-		}
-		defer dbSchema.Close()
+	// Connect to the newly created database
+	connStr = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
+		host, port, adminUser, adminPassword, databaseName, sslMode)
 
-		// Escape schema name for SQL identifier
-		escapedSchemaName := pq.QuoteIdentifier(schemaName)
+	dbSchema, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return fmt.Errorf("failed to open database connection to %s: %w", databaseName, err)
+	}
+	defer dbSchema.Close()
 
-		// Check if schema exists
-		var schemaExists bool
-		err = dbSchema.QueryRowContext(connCtx,
-			"SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)",
-			schemaName).Scan(&schemaExists)
-		if err != nil {
-			return fmt.Errorf("failed to check if schema exists: %w", err)
-		}
+	// Escape schema name for SQL identifier
+	escapedSchemaName := pq.QuoteIdentifier(schemaName)
 
-		if schemaExists {
-			// Update schema owner
-			query := fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", escapedSchemaName, escapedOwner)
-			_, err = dbSchema.ExecContext(connCtx, query)
-			if err != nil {
-				return fmt.Errorf("failed to update schema owner: %w", err)
-			}
-		}
+	// Check if schema exists
+	var schemaExists bool
+	err = dbSchema.QueryRowContext(connCtx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)",
+		schemaName).Scan(&schemaExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if schema exists: %w", err)
+	}
+
+	if !schemaExists {
+		return nil
+	}
+
+	// Update schema owner
+	query = fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", escapedSchemaName, escapedOwner)
+	_, err = dbSchema.ExecContext(connCtx, query)
+	if err != nil {
+		return fmt.Errorf("failed to update schema owner: %w", err)
 	}
 
 	return nil

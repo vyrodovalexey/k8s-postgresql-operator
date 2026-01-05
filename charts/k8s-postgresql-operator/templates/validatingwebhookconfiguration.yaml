@@ -1,0 +1,171 @@
+{{- if .Values.webhooks.enabled }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.names.postgresql }}
+  labels:
+    {{- include "k8s-postgresql-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ .Values.webhook.k8sServiceName }}
+      namespace: {{ .Release.Namespace }}
+      path: /postgresqlvalidate
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: postgresql-operator.vyrodovalexey.github.com
+  rules:
+  - apiGroups:
+    - postgresql-operator.vyrodovalexey.github.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - postgresqls
+  sideEffects: {{ .Values.webhooks.sideEffects }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.names.user }}
+  labels:
+    {{- include "k8s-postgresql-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ .Values.webhook.k8sServiceName }}
+      namespace: {{ .Release.Namespace }}
+      path: /uservalidate
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: postgresql-operator.vyrodovalexey.github.com
+  rules:
+  - apiGroups:
+    - postgresql-operator.vyrodovalexey.github.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - users
+  sideEffects: {{ .Values.webhooks.sideEffects }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.names.database }}
+  labels:
+    {{- include "k8s-postgresql-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ .Values.webhook.k8sServiceName }}
+      namespace: {{ .Release.Namespace }}
+      path: /databasevalidate
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: postgresql-operator.vyrodovalexey.github.com
+  rules:
+  - apiGroups:
+    - postgresql-operator.vyrodovalexey.github.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - databases
+  sideEffects: {{ .Values.webhooks.sideEffects }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.names.grant }}
+  labels:
+    {{- include "k8s-postgresql-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ .Values.webhook.k8sServiceName }}
+      namespace: {{ .Release.Namespace }}
+      path: /grantvalidate
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: postgresql-operator.vyrodovalexey.github.com
+  rules:
+  - apiGroups:
+    - postgresql-operator.vyrodovalexey.github.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - grants
+  sideEffects: {{ .Values.webhooks.sideEffects }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.names.rolegroup }}
+  labels:
+    {{- include "k8s-postgresql-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ .Values.webhook.k8sServiceName }}
+      namespace: {{ .Release.Namespace }}
+      path: /rolegroupvalidate
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: postgresql-operator.vyrodovalexey.github.com
+  rules:
+  - apiGroups:
+    - postgresql-operator.vyrodovalexey.github.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - rolegroups
+  sideEffects: {{ .Values.webhooks.sideEffects }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.names.schema }}
+  labels:
+    {{- include "k8s-postgresql-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ .Values.webhook.k8sServiceName }}
+      namespace: {{ .Release.Namespace }}
+      path: /schemavalidate
+  failurePolicy: {{ .Values.webhooks.failurePolicy }}
+  name: postgresql-operator.vyrodovalexey.github.com
+  rules:
+  - apiGroups:
+    - postgresql-operator.vyrodovalexey.github.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - schemas
+  sideEffects: {{ .Values.webhooks.sideEffects }}
+{{- end }}
+

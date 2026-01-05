@@ -100,23 +100,7 @@ func (r *GrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	var postgresUsername, postgresPassword string
-	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
-			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
-		if err != nil {
-			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
-			updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "VaultError",
-				fmt.Sprintf("Failed to get credentials from Vault: %v", err))
-			if err := r.Status().Update(ctx, grant); err != nil {
-				r.Log.Error(err, "Failed to update Grant status")
-			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-		postgresUsername = vaultUsername
-		postgresPassword = vaultPassword
-		r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
-	} else {
+	if r.VaultClient == nil {
 		r.Log.Infow("Vault client not available")
 		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "VaultNotAvailable",
 			"Vault client is not available")
@@ -125,6 +109,22 @@ func (r *GrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		return ctrl.Result{}, nil
 	}
+
+	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+		ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
+		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+	if err != nil {
+		r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "VaultError",
+			fmt.Sprintf("Failed to get credentials from Vault: %v", err))
+		if err := r.Status().Update(ctx, grant); err != nil {
+			r.Log.Error(err, "Failed to update Grant status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	postgresUsername = vaultUsername
+	postgresPassword = vaultPassword
+	r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
 
 	// Apply grants in PostgreSQL with retry logic
 	err = pg.ExecuteOperationWithRetry(ctx, func() error {

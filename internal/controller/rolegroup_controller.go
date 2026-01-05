@@ -101,23 +101,7 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	var postgresUsername, postgresPassword string
-	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
-			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
-		if err != nil {
-			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
-			updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "VaultError",
-				fmt.Sprintf("Failed to get credentials from Vault: %v", err))
-			if err := r.Status().Update(ctx, roleGroup); err != nil {
-				r.Log.Error(err, "Failed to update RoleGroup status")
-			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-		postgresUsername = vaultUsername
-		postgresPassword = vaultPassword
-		r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
-	} else {
+	if r.VaultClient == nil {
 		r.Log.Infow("Vault client not available")
 		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "VaultNotAvailable",
 			"Vault client is not available")
@@ -126,6 +110,22 @@ func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, nil
 	}
+
+	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+		ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
+		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+	if err != nil {
+		r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "VaultError",
+			fmt.Sprintf("Failed to get credentials from Vault: %v", err))
+		if err := r.Status().Update(ctx, roleGroup); err != nil {
+			r.Log.Error(err, "Failed to update RoleGroup status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	postgresUsername = vaultUsername
+	postgresPassword = vaultPassword
+	r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
 
 	// Create or update role group in PostgreSQL
 	err = pg.ExecuteOperationWithRetry(ctx, func() error {

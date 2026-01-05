@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "k8s-postgresql-operator.fullname" . }}
+  labels:
+    {{- include "k8s-postgresql-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "k8s-postgresql-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "k8s-postgresql-operator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      serviceAccountName: {{ include "k8s-postgresql-operator.serviceAccountName" . }}
+      containers:
+      - name: manager
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: "{{ if .Values.global.imageRegistry }}{{ .Values.global.imageRegistry }}/{{ end }}{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /app/manager
+        args:
+        - --health-probe-bind-address={{ .Values.operator.probeAddr }}
+        {{- if .Values.operator.enableLeaderElection }}
+        - --leader-elect
+        {{- end }}
+        {{- if .Values.webhook.certPath }}
+        - --webhook-cert-path={{ .Values.webhook.certPath }}
+        {{- end }}
+        - --webhook-cert-name={{ .Values.webhook.certName }}
+        - --webhook-cert-key={{ .Values.webhook.certKey }}
+        - --webhook-server-port={{ .Values.webhook.serverPort }}
+        - --webhook-server-addr={{ .Values.webhook.serverAddr }}
+        - --webhook-k8s-service-name={{ .Values.webhook.k8sServiceName }}
+        - --k8s-webhook-name-postgresql={{ .Values.webhook.names.postgresql }}
+        - --k8s-webhook-name-user={{ .Values.webhook.names.user }}
+        - --k8s-webhook-name-database={{ .Values.webhook.names.database }}
+        - --k8s-webhook-name-grant={{ .Values.webhook.names.grant }}
+        - --k8s-webhook-name-rolegroup={{ .Values.webhook.names.rolegroup }}
+        - --k8s-webhook-name-schema={{ .Values.webhook.names.schema }}
+        - --vault-addr={{ .Values.vault.addr }}
+        - --vault-role={{ .Values.vault.role }}
+        - --vault-mount-point={{ .Values.vault.mountPoint }}
+        - --vault-secret-path={{ .Values.vault.secretPath }}
+        - --k8s-token-path={{ .Values.k8s.tokenPath }}
+        - --k8s-namespace-path={{ .Values.k8s.namespacePath }}
+        - --exclude-user-list={{ .Values.operator.excludeUserList }}
+        - --postgresql-connection-retries={{ .Values.operator.postgresqlConnectionRetries }}
+        - --postgresql-connection-timeout-secs={{ .Values.operator.postgresqlConnectionTimeoutSecs }}
+        - --vault-availability-retries={{ .Values.operator.vaultAvailabilityRetries }}
+        - --vault-availability-retry-delay-secs={{ .Values.operator.vaultAvailabilityRetryDelaySecs }}
+        env:
+        - name: VAULT_ADDR
+          value: {{ .Values.vault.addr | quote }}
+        - name: VAULT_ROLE
+          value: {{ .Values.vault.role | quote }}
+        - name: ENABLE_LEADER_ELECTION
+          value: {{ .Values.operator.enableLeaderElection | quote }}
+        ports:
+        - name: https
+          containerPort: {{ .Values.webhook.serverPort }}
+          protocol: TCP
+        - name: http-probe
+          containerPort: 8081
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http-probe
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http-probe
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+

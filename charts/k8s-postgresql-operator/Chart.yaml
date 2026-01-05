@@ -1,0 +1,17 @@
+apiVersion: v2
+name: k8s-postgresql-operator
+description: A Helm chart for k8s-postgresql-operator
+type: application
+version: 0.1.0
+appVersion: "0.0.1"
+keywords:
+  - postgresql
+  - operator
+  - kubernetes
+home: https://github.com/vyrodovalexey/k8s-postgresql-operator
+sources:
+  - https://github.com/vyrodovalexey/k8s-postgresql-operator
+maintainers:
+  - name: k8s-postgresql-operator
+kubeVersion: ">=1.24.0"
+
