@@ -39,559 +39,6 @@ import (
 // If you want to use pgxmock, you would need to refactor the operations.go file
 // to use the pgx driver (github.com/jackc/pgx/v5) instead of database/sql with lib/pq.
 
-func TestCreateOrUpdateDatabase_DatabaseExists(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	owner := "testowner"
-
-	// Mock the database existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(databaseName).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock the ALTER DATABASE query
-	mock.ExpectExec("ALTER DATABASE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	// We need to mock sql.Open, but sqlmock doesn't support that directly.
-	// Instead, we'll test the logic by creating a test helper that accepts a *sql.DB
-	err = createOrUpdateDatabaseWithDB(ctx, db, databaseName, owner, "", "")
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateDatabase_DatabaseNotExists(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	owner := "testowner"
-
-	// Mock the database existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(databaseName).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	// Mock the CREATE DATABASE query
-	mock.ExpectExec("CREATE DATABASE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateDatabaseWithDB(ctx, db, databaseName, owner, "", "")
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateDatabase_WithTemplate(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	owner := "testowner"
-	templateDatabase := "template1"
-
-	// Mock the database existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(databaseName).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	// Mock the CREATE DATABASE with TEMPLATE query
-	mock.ExpectExec("CREATE DATABASE.*TEMPLATE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateDatabaseWithDB(ctx, db, databaseName, owner, "", templateDatabase)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateDatabase_WithSchema(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	dbSchema, mockSchema, err := sqlmock.New()
-	require.NoError(t, err)
-	defer dbSchema.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	owner := "testowner"
-	schemaName := "myschema"
-
-	// Mock the database existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(databaseName).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	// Mock the CREATE DATABASE query
-	mock.ExpectExec("CREATE DATABASE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	// Mock schema existence check
-	mockSchema.ExpectQuery("SELECT EXISTS").
-		WithArgs(schemaName).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock ALTER SCHEMA query
-	mockSchema.ExpectExec("ALTER SCHEMA").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateDatabaseWithDBAndSchemaDB(ctx, db, dbSchema, databaseName, owner, schemaName, "")
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-	assert.NoError(t, mockSchema.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateDatabase_CheckExistsError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	owner := "testowner"
-
-	// Mock the database existence check to return an error
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(databaseName).
-		WillReturnError(errors.New("connection error"))
-
-	err = createOrUpdateDatabaseWithDB(ctx, db, databaseName, owner, "", "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to check if database exists")
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateUser_UserExists(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	username := "testuser"
-	password := "testpass"
-
-	// Mock the user existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(username).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock the ALTER USER query
-	mock.ExpectExec("ALTER USER").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateUserWithDB(ctx, db, username, password)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateUser_UserNotExists(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	username := "testuser"
-	password := "testpass"
-
-	// Mock the user existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(username).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	// Mock the CREATE USER query
-	mock.ExpectExec("CREATE USER").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateUserWithDB(ctx, db, username, password)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateUser_CheckExistsError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	username := "testuser"
-	password := "testpass"
-
-	// Mock the user existence check to return an error
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(username).
-		WillReturnError(errors.New("connection error"))
-
-	err = createOrUpdateUserWithDB(ctx, db, username, password)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to check if user exists")
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateRoleGroup_RoleNotExists(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	groupRole := "testgroup"
-	memberRoles := []string{"member1", "member2"}
-
-	// Mock the group role existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(groupRole).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	// Mock the CREATE ROLE query
-	mock.ExpectExec("CREATE ROLE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	// Mock query for current members (empty result)
-	mock.ExpectQuery("SELECT r.rolname").
-		WithArgs(groupRole).
-		WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
-
-	// Mock member role existence checks (in order they are checked)
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs("member1").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock GRANT query for member1
-	mock.ExpectExec("GRANT").
-		WithArgs().
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	// Mock member role existence check for member2
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs("member2").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock GRANT query for member2
-	mock.ExpectExec("GRANT").
-		WithArgs().
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateRoleGroupWithDB(ctx, db, groupRole, memberRoles)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateRoleGroup_RemoveMembers(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	groupRole := "testgroup"
-	memberRoles := []string{"member1"}
-
-	// Mock the group role existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(groupRole).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock query for current members (return member2 which should be removed)
-	mock.ExpectQuery("SELECT r.rolname").
-		WithArgs(groupRole).
-		WillReturnRows(sqlmock.NewRows([]string{"rolname"}).AddRow("member2"))
-
-	// Mock member role existence check for member1
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs("member1").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock GRANT query for member1
-	mock.ExpectExec("GRANT").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	// Mock REVOKE query for member2
-	mock.ExpectExec("REVOKE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateRoleGroupWithDB(ctx, db, groupRole, memberRoles)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateSchema_SchemaExists(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	schemaName := "testschema"
-	owner := "testowner"
-
-	// Mock the schema existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(schemaName).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Mock the ALTER SCHEMA query
-	mock.ExpectExec("ALTER SCHEMA").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateSchemaWithDB(ctx, db, schemaName, owner)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestCreateOrUpdateSchema_SchemaNotExists(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	schemaName := "testschema"
-	owner := "testowner"
-
-	// Mock the schema existence check
-	mock.ExpectQuery("SELECT EXISTS").
-		WithArgs(schemaName).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	// Mock the CREATE SCHEMA query
-	mock.ExpectExec("CREATE SCHEMA").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = createOrUpdateSchemaWithDB(ctx, db, schemaName, owner)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyGrants_DatabaseGrant(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	roleName := "testrole"
-	grants := []instancev1alpha1.GrantItem{
-		{
-			Type:       instancev1alpha1.GrantTypeDatabase,
-			Privileges: []string{"CONNECT", "CREATE"},
-		},
-	}
-
-	// Mock Ping
-	mock.ExpectPing()
-
-	// Mock GRANT ON DATABASE query
-	mock.ExpectExec("GRANT.*ON DATABASE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = applyGrantsWithDB(ctx, db, databaseName, roleName, grants, nil)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyGrants_TableGrant(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	roleName := "testrole"
-	grants := []instancev1alpha1.GrantItem{
-		{
-			Type:       instancev1alpha1.GrantTypeTable,
-			Schema:     "public",
-			Table:      "users",
-			Privileges: []string{"SELECT", "INSERT"},
-		},
-	}
-
-	// Mock Ping
-	mock.ExpectPing()
-
-	// Mock GRANT ON TABLE query
-	mock.ExpectExec("GRANT.*ON TABLE").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = applyGrantsWithDB(ctx, db, databaseName, roleName, grants, nil)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyGrants_DefaultPrivileges(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	databaseName := "testdb"
-	roleName := "testrole"
-	defaultPrivileges := []instancev1alpha1.DefaultPrivilegeItem{
-		{
-			Schema:     "public",
-			ObjectType: "tables",
-			Privileges: []string{"SELECT", "INSERT"},
-		},
-	}
-
-	// Mock Ping
-	mock.ExpectPing()
-
-	// Mock ALTER DEFAULT PRIVILEGES query
-	mock.ExpectExec("ALTER DEFAULT PRIVILEGES").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = applyGrantsWithDB(ctx, db, databaseName, roleName, nil, defaultPrivileges)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyGrantItem_SchemaGrant(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	escapedRole := "\"testrole\""
-	grant := instancev1alpha1.GrantItem{
-		Type:       instancev1alpha1.GrantTypeSchema,
-		Schema:     "public",
-		Privileges: []string{"USAGE", "CREATE"},
-	}
-
-	// Mock GRANT ON SCHEMA query
-	mock.ExpectExec("GRANT.*ON SCHEMA").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = applyGrantItem(ctx, db, escapedRole, grant)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyGrantItem_AllTablesGrant(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	escapedRole := "\"testrole\""
-	grant := instancev1alpha1.GrantItem{
-		Type:       instancev1alpha1.GrantTypeAllTables,
-		Schema:     "public",
-		Privileges: []string{"SELECT", "INSERT"},
-	}
-
-	// Mock GRANT ON ALL TABLES query
-	mock.ExpectExec("GRANT.*ON ALL TABLES").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = applyGrantItem(ctx, db, escapedRole, grant)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyGrantItem_InvalidGrantType(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	escapedRole := "\"testrole\""
-	grant := instancev1alpha1.GrantItem{
-		Type: "invalid_type",
-	}
-
-	err = applyGrantItem(ctx, db, escapedRole, grant)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown grant type")
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyGrantItem_MissingSchema(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	escapedRole := "\"testrole\""
-	grant := instancev1alpha1.GrantItem{
-		Type:       instancev1alpha1.GrantTypeTable,
-		Table:      "users",
-		Privileges: []string{"SELECT"},
-	}
-
-	err = applyGrantItem(ctx, db, escapedRole, grant)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "schema is required")
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyDefaultPrivilege_Tables(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	escapedRole := "\"testrole\""
-	defaultPriv := instancev1alpha1.DefaultPrivilegeItem{
-		Schema:     "public",
-		ObjectType: "tables",
-		Privileges: []string{"SELECT", "INSERT"},
-	}
-
-	// Mock ALTER DEFAULT PRIVILEGES query
-	mock.ExpectExec("ALTER DEFAULT PRIVILEGES.*ON TABLES").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = applyDefaultPrivilege(ctx, db, escapedRole, defaultPriv)
-	assert.NoError(t, err)
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyDefaultPrivilege_InvalidObjectType(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	escapedRole := "\"testrole\""
-	defaultPriv := instancev1alpha1.DefaultPrivilegeItem{
-		Schema:     "public",
-		ObjectType: "invalid_type",
-		Privileges: []string{"SELECT"},
-	}
-
-	err = applyDefaultPrivilege(ctx, db, escapedRole, defaultPriv)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown default privilege object type")
-
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
 // Helper functions to allow testing with mocked database connections
 // These functions accept *sql.DB instead of opening connections
 
@@ -895,4 +342,1328 @@ func applyGrantsWithDB(
 	}
 
 	return nil
+}
+
+// Table-driven tests for PostgreSQL operations
+
+// TestCreateOrUpdateDatabase_TableDriven tests CreateOrUpdateDatabase with various scenarios
+func TestCreateOrUpdateDatabase_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		databaseName  string
+		owner         string
+		schemaName    string
+		templateDB    string
+		dbExists      bool
+		schemaExists  bool
+		setupMock     func(sqlmock.Sqlmock)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:         "Database exists - update owner",
+			databaseName: "testdb",
+			owner:        "testowner",
+			dbExists:     true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("ALTER DATABASE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:         "Database does not exist - create new",
+			databaseName: "testdb",
+			owner:        "testowner",
+			dbExists:     false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE DATABASE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:         "Create database with template",
+			databaseName: "testdb",
+			owner:        "testowner",
+			templateDB:   "template1",
+			dbExists:     false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE DATABASE.*TEMPLATE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:         "Create database with schema - schema exists",
+			databaseName: "testdb",
+			owner:        "testowner",
+			schemaName:   "myschema",
+			dbExists:     false,
+			schemaExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE DATABASE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:         "Create database with public schema - should skip",
+			databaseName: "testdb",
+			owner:        "testowner",
+			schemaName:   "public",
+			dbExists:     false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE DATABASE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:         "Create database with empty schema - should skip",
+			databaseName: "testdb",
+			owner:        "testowner",
+			schemaName:   "",
+			dbExists:     false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE DATABASE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:         "Check database exists error",
+			databaseName: "testdb",
+			owner:        "testowner",
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnError(errors.New("query error"))
+			},
+			expectError:   true,
+			errorContains: "failed to check if database exists",
+		},
+		{
+			name:         "Update database owner error",
+			databaseName: "testdb",
+			owner:        "testowner",
+			dbExists:     true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("ALTER DATABASE").
+					WillReturnError(errors.New("alter error"))
+			},
+			expectError:   true,
+			errorContains: "failed to update database owner",
+		},
+		{
+			name:         "Create database error",
+			databaseName: "testdb",
+			owner:        "testowner",
+			dbExists:     false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE DATABASE").
+					WillReturnError(errors.New("create error"))
+			},
+			expectError:   true,
+			errorContains: "failed to create database",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			var dbSchema *sql.DB
+			var mockSchema sqlmock.Sqlmock
+			if tt.schemaName != "" && tt.schemaName != "public" {
+				dbSchema, mockSchema, err = sqlmock.New()
+				require.NoError(t, err)
+				defer dbSchema.Close()
+
+				if tt.schemaExists {
+					mockSchema.ExpectQuery("SELECT EXISTS").
+						WithArgs(tt.schemaName).
+						WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+					mockSchema.ExpectExec("ALTER SCHEMA").
+						WillReturnResult(sqlmock.NewResult(0, 1))
+				} else {
+					mockSchema.ExpectQuery("SELECT EXISTS").
+						WithArgs(tt.schemaName).
+						WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				}
+
+				err = createOrUpdateDatabaseWithDBAndSchemaDB(
+					ctx, db, dbSchema, tt.databaseName, tt.owner, tt.schemaName, tt.templateDB)
+			} else {
+				err = createOrUpdateDatabaseWithDB(
+					ctx, db, tt.databaseName, tt.owner, tt.schemaName, tt.templateDB)
+			}
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+			if dbSchema != nil {
+				assert.NoError(t, mockSchema.ExpectationsWereMet())
+			}
+		})
+	}
+}
+
+// TestCreateOrUpdateDatabase_WithSchema_TableDriven tests schema handling scenarios
+func TestCreateOrUpdateDatabase_WithSchema_TableDriven(t *testing.T) {
+	tests := []struct {
+		name            string
+		schemaName      string
+		schemaExists    bool
+		schemaCheckErr  error
+		schemaUpdateErr error
+		expectError     bool
+		errorContains   string
+	}{
+		{
+			name:         "Schema exists - update owner",
+			schemaName:   "myschema",
+			schemaExists: true,
+			expectError:  false,
+		},
+		{
+			name:         "Schema does not exist - skip",
+			schemaName:   "myschema",
+			schemaExists: false,
+			expectError:  false,
+		},
+		{
+			name:           "Schema check error",
+			schemaName:     "myschema",
+			schemaCheckErr: errors.New("check error"),
+			expectError:    true,
+			errorContains:  "failed to check if schema exists",
+		},
+		{
+			name:            "Schema update error",
+			schemaName:      "myschema",
+			schemaExists:    true,
+			schemaUpdateErr: errors.New("update error"),
+			expectError:     true,
+			errorContains:   "failed to update schema owner",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			dbSchema, mockSchema, err := sqlmock.New()
+			require.NoError(t, err)
+			defer dbSchema.Close()
+
+			ctx := context.Background()
+			databaseName := "testdb"
+			owner := "testowner"
+
+			mock.ExpectQuery("SELECT EXISTS").
+				WithArgs(databaseName).
+				WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+			mock.ExpectExec("CREATE DATABASE").
+				WillReturnResult(sqlmock.NewResult(0, 1))
+
+			if tt.schemaCheckErr != nil {
+				mockSchema.ExpectQuery("SELECT EXISTS").
+					WithArgs(tt.schemaName).
+					WillReturnError(tt.schemaCheckErr)
+			} else {
+				mockSchema.ExpectQuery("SELECT EXISTS").
+					WithArgs(tt.schemaName).
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(tt.schemaExists))
+
+				if tt.schemaExists {
+					if tt.schemaUpdateErr != nil {
+						mockSchema.ExpectExec("ALTER SCHEMA").
+							WillReturnError(tt.schemaUpdateErr)
+					} else {
+						mockSchema.ExpectExec("ALTER SCHEMA").
+							WillReturnResult(sqlmock.NewResult(0, 1))
+					}
+				}
+			}
+
+			err = createOrUpdateDatabaseWithDBAndSchemaDB(
+				ctx, db, dbSchema, databaseName, owner, tt.schemaName, "")
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+			assert.NoError(t, mockSchema.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestCreateOrUpdateUser_TableDriven tests CreateOrUpdateUser with various scenarios
+func TestCreateOrUpdateUser_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		username      string
+		password      string
+		userExists    bool
+		setupMock     func(sqlmock.Sqlmock)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:       "User exists - update password",
+			username:   "testuser",
+			password:   "newpass",
+			userExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("ALTER USER").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:       "User does not exist - create new",
+			username:   "testuser",
+			password:   "testpass",
+			userExists: false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE USER").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:     "Check user exists error",
+			username: "testuser",
+			password: "testpass",
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnError(errors.New("query error"))
+			},
+			expectError:   true,
+			errorContains: "failed to check if user exists",
+		},
+		{
+			name:       "Update password error",
+			username:   "testuser",
+			password:   "newpass",
+			userExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("ALTER USER").
+					WillReturnError(errors.New("alter error"))
+			},
+			expectError:   true,
+			errorContains: "failed to update user password",
+		},
+		{
+			name:       "Create user error",
+			username:   "testuser",
+			password:   "testpass",
+			userExists: false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE USER").
+					WillReturnError(errors.New("create error"))
+			},
+			expectError:   true,
+			errorContains: "failed to create user",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = createOrUpdateUserWithDB(ctx, db, tt.username, tt.password)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestCreateOrUpdateRoleGroup_TableDriven tests CreateOrUpdateRoleGroup with various scenarios
+func TestCreateOrUpdateRoleGroup_TableDriven(t *testing.T) {
+	tests := []struct {
+		name           string
+		groupRole      string
+		memberRoles    []string
+		groupExists    bool
+		currentMembers []string
+		memberExists   map[string]bool
+		setupMock      func(sqlmock.Sqlmock)
+		expectError    bool
+		errorContains  string
+	}{
+		{
+			name:        "Group does not exist - create and add members",
+			groupRole:   "testgroup",
+			memberRoles: []string{"member1", "member2"},
+			groupExists: false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE ROLE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("member1").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("member2").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:           "Group exists - add new members",
+			groupRole:      "testgroup",
+			memberRoles:    []string{"member1"},
+			groupExists:    true,
+			currentMembers: []string{},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("member1").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:           "Remove members",
+			groupRole:      "testgroup",
+			memberRoles:    []string{},
+			groupExists:    true,
+			currentMembers: []string{"oldmember"},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}).AddRow("oldmember"))
+				m.ExpectExec("REVOKE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:        "Member does not exist - skip",
+			groupRole:   "testgroup",
+			memberRoles: []string{"nonexistent"},
+			groupExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("nonexistent").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+			},
+			expectError: false,
+		},
+		{
+			name:        "Check group exists error",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnError(errors.New("query error"))
+			},
+			expectError:   true,
+			errorContains: "failed to check if group role exists",
+		},
+		{
+			name:        "Create group error",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			groupExists: false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE ROLE").
+					WillReturnError(errors.New("create error"))
+			},
+			expectError:   true,
+			errorContains: "failed to create group role",
+		},
+		{
+			name:        "Query members error",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			groupExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnError(errors.New("query error"))
+			},
+			expectError:   true,
+			errorContains: "failed to query current members",
+		},
+		{
+			name:        "Scan member error",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			groupExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				rows := sqlmock.NewRows([]string{"rolname"}).AddRow("member1")
+				rows = rows.RowError(0, errors.New("scan error"))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(rows)
+			},
+			expectError:   true,
+			errorContains: "error iterating members",
+		},
+		{
+			name:        "Rows iteration error",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			groupExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				rows := sqlmock.NewRows([]string{"rolname"}).AddRow("member1").
+					CloseError(errors.New("rows error"))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(rows)
+			},
+			expectError:   true,
+			errorContains: "error iterating members",
+		},
+		{
+			name:        "Check member exists error",
+			groupRole:   "testgroup",
+			memberRoles: []string{"member1"},
+			groupExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("member1").
+					WillReturnError(errors.New("check error"))
+			},
+			expectError:   true,
+			errorContains: "failed to check if member role exists",
+		},
+		{
+			name:           "Add member error",
+			groupRole:      "testgroup",
+			memberRoles:    []string{"member1"},
+			groupExists:    true,
+			currentMembers: []string{},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("member1").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnError(errors.New("grant error"))
+			},
+			expectError:   true,
+			errorContains: "failed to add member",
+		},
+		{
+			name:           "Remove member error",
+			groupRole:      "testgroup",
+			memberRoles:    []string{},
+			groupExists:    true,
+			currentMembers: []string{"oldmember"},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}).AddRow("oldmember"))
+				m.ExpectExec("REVOKE").
+					WillReturnError(errors.New("revoke error"))
+			},
+			expectError:   true,
+			errorContains: "failed to remove member",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = createOrUpdateRoleGroupWithDB(ctx, db, tt.groupRole, tt.memberRoles)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestCreateOrUpdateSchema_TableDriven tests CreateOrUpdateSchema with various scenarios
+func TestCreateOrUpdateSchema_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		schemaName    string
+		owner         string
+		schemaExists  bool
+		setupMock     func(sqlmock.Sqlmock)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:         "Schema exists - update owner",
+			schemaName:   "testschema",
+			owner:        "testowner",
+			schemaExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testschema").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("ALTER SCHEMA").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:         "Schema does not exist - create new",
+			schemaName:   "testschema",
+			owner:        "testowner",
+			schemaExists: false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testschema").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE SCHEMA").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:       "Check schema exists error",
+			schemaName: "testschema",
+			owner:      "testowner",
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testschema").
+					WillReturnError(errors.New("query error"))
+			},
+			expectError:   true,
+			errorContains: "failed to check if schema exists",
+		},
+		{
+			name:         "Update schema owner error",
+			schemaName:   "testschema",
+			owner:        "testowner",
+			schemaExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testschema").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("ALTER SCHEMA").
+					WillReturnError(errors.New("alter error"))
+			},
+			expectError:   true,
+			errorContains: "failed to update schema owner",
+		},
+		{
+			name:         "Create schema error",
+			schemaName:   "testschema",
+			owner:        "testowner",
+			schemaExists: false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testschema").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectExec("CREATE SCHEMA").
+					WillReturnError(errors.New("create error"))
+			},
+			expectError:   true,
+			errorContains: "failed to create schema",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = createOrUpdateSchemaWithDB(ctx, db, tt.schemaName, tt.owner)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestApplyGrantItem_TableDriven tests applyGrantItem with all grant types
+func TestApplyGrantItem_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		grant         instancev1alpha1.GrantItem
+		setupMock     func(sqlmock.Sqlmock)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "Schema grant - success",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeSchema,
+				Schema:     "public",
+				Privileges: []string{"USAGE", "CREATE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("GRANT.*ON SCHEMA").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Table grant - success",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeTable,
+				Schema:     "public",
+				Table:      "users",
+				Privileges: []string{"SELECT", "INSERT"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("GRANT.*ON TABLE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Sequence grant - success",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeSequence,
+				Schema:     "public",
+				Sequence:   "myseq",
+				Privileges: []string{"SELECT", "USAGE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("GRANT.*ON SEQUENCE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Function grant - success",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeFunction,
+				Schema:     "public",
+				Function:   "myfunc",
+				Privileges: []string{"EXECUTE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("GRANT.*ON FUNCTION").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "All tables grant - success",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeAllTables,
+				Schema:     "public",
+				Privileges: []string{"SELECT", "INSERT"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("GRANT.*ON ALL TABLES").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "All sequences grant - success",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeAllSequences,
+				Schema:     "public",
+				Privileges: []string{"SELECT", "USAGE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("GRANT.*ON ALL SEQUENCES").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Schema grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeSchema,
+				Privileges: []string{"USAGE"},
+			},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "Table grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeTable,
+				Table:      "users",
+				Privileges: []string{"SELECT"},
+			},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "Table grant - missing table",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeTable,
+				Schema:     "public",
+				Privileges: []string{"SELECT"},
+			},
+			expectError:   true,
+			errorContains: "table is required",
+		},
+		{
+			name: "Sequence grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeSequence,
+				Sequence:   "myseq",
+				Privileges: []string{"SELECT"},
+			},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "Sequence grant - missing sequence",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeSequence,
+				Schema:     "public",
+				Privileges: []string{"SELECT"},
+			},
+			expectError:   true,
+			errorContains: "sequence is required",
+		},
+		{
+			name: "Function grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeFunction,
+				Function:   "myfunc",
+				Privileges: []string{"EXECUTE"},
+			},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "Function grant - missing function",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeFunction,
+				Schema:     "public",
+				Privileges: []string{"EXECUTE"},
+			},
+			expectError:   true,
+			errorContains: "function is required",
+		},
+		{
+			name: "All tables grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeAllTables,
+				Privileges: []string{"SELECT"},
+			},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "All sequences grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeAllSequences,
+				Privileges: []string{"SELECT"},
+			},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "Invalid grant type",
+			grant: instancev1alpha1.GrantItem{
+				Type: "invalid_type",
+			},
+			expectError:   true,
+			errorContains: "unknown grant type",
+		},
+		{
+			name: "Exec error",
+			grant: instancev1alpha1.GrantItem{
+				Type:       instancev1alpha1.GrantTypeSchema,
+				Schema:     "public",
+				Privileges: []string{"USAGE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("GRANT.*ON SCHEMA").
+					WillReturnError(errors.New("exec error"))
+			},
+			expectError:   true,
+			errorContains: "failed to execute grant query",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+			escapedRole := "\"testrole\""
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = applyGrantItem(ctx, db, escapedRole, tt.grant)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestApplyDefaultPrivilege_TableDriven tests applyDefaultPrivilege with all object types
+func TestApplyDefaultPrivilege_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		defaultPriv   instancev1alpha1.DefaultPrivilegeItem
+		setupMock     func(sqlmock.Sqlmock)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "Tables - success",
+			defaultPriv: instancev1alpha1.DefaultPrivilegeItem{
+				Schema:     "public",
+				ObjectType: "tables",
+				Privileges: []string{"SELECT", "INSERT"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("ALTER DEFAULT PRIVILEGES.*ON TABLES").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Sequences - success",
+			defaultPriv: instancev1alpha1.DefaultPrivilegeItem{
+				Schema:     "public",
+				ObjectType: "sequences",
+				Privileges: []string{"SELECT", "USAGE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("ALTER DEFAULT PRIVILEGES.*ON SEQUENCES").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Functions - success",
+			defaultPriv: instancev1alpha1.DefaultPrivilegeItem{
+				Schema:     "public",
+				ObjectType: "functions",
+				Privileges: []string{"EXECUTE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("ALTER DEFAULT PRIVILEGES.*ON FUNCTIONS").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Types - success",
+			defaultPriv: instancev1alpha1.DefaultPrivilegeItem{
+				Schema:     "public",
+				ObjectType: "types",
+				Privileges: []string{"USAGE"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("ALTER DEFAULT PRIVILEGES.*ON TYPES").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Invalid object type",
+			defaultPriv: instancev1alpha1.DefaultPrivilegeItem{
+				Schema:     "public",
+				ObjectType: "invalid_type",
+				Privileges: []string{"SELECT"},
+			},
+			expectError:   true,
+			errorContains: "unknown default privilege object type",
+		},
+		{
+			name: "Exec error",
+			defaultPriv: instancev1alpha1.DefaultPrivilegeItem{
+				Schema:     "public",
+				ObjectType: "tables",
+				Privileges: []string{"SELECT"},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("ALTER DEFAULT PRIVILEGES").
+					WillReturnError(errors.New("exec error"))
+			},
+			expectError:   true,
+			errorContains: "failed to execute default privilege query",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+			escapedRole := "\"testrole\""
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = applyDefaultPrivilege(ctx, db, escapedRole, tt.defaultPriv)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestApplyGrants_TableDriven tests ApplyGrants with various scenarios
+func TestApplyGrants_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		grants        []instancev1alpha1.GrantItem
+		defaultPrivs  []instancev1alpha1.DefaultPrivilegeItem
+		setupMock     func(sqlmock.Sqlmock)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "Database grants only",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeDatabase,
+					Privileges: []string{"CONNECT", "CREATE"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing()
+				m.ExpectExec("GRANT.*ON DATABASE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Other grants only",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeTable,
+					Schema:     "public",
+					Table:      "users",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing()
+				m.ExpectExec("GRANT.*ON TABLE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Default privileges only",
+			defaultPrivs: []instancev1alpha1.DefaultPrivilegeItem{
+				{
+					Schema:     "public",
+					ObjectType: "tables",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing()
+				m.ExpectExec("ALTER DEFAULT PRIVILEGES").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Mixed grants",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeDatabase,
+					Privileges: []string{"CONNECT"},
+				},
+				{
+					Type:       instancev1alpha1.GrantTypeTable,
+					Schema:     "public",
+					Table:      "users",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing()
+				m.ExpectExec("GRANT.*ON DATABASE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				m.ExpectPing()
+				m.ExpectExec("GRANT.*ON TABLE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name: "Database grants ping error",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeDatabase,
+					Privileges: []string{"CONNECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing().
+					WillReturnError(errors.New("ping error"))
+			},
+			expectError:   true,
+			errorContains: "failed to ping",
+		},
+		{
+			name: "Database grant exec error",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeDatabase,
+					Privileges: []string{"CONNECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing()
+				m.ExpectExec("GRANT.*ON DATABASE").
+					WillReturnError(errors.New("grant error"))
+			},
+			expectError:   true,
+			errorContains: "failed to apply database grant",
+		},
+		{
+			name: "Other grants ping error",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeTable,
+					Schema:     "public",
+					Table:      "users",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing().
+					WillReturnError(errors.New("ping error"))
+			},
+			expectError:   true,
+			errorContains: "failed to ping",
+		},
+		{
+			name: "Grant item error",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeTable,
+					Schema:     "public",
+					Table:      "users",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing()
+				m.ExpectExec("GRANT.*ON TABLE").
+					WillReturnError(errors.New("grant error"))
+			},
+			expectError:   true,
+			errorContains: "failed to apply grant",
+		},
+		{
+			name: "Default privilege error",
+			defaultPrivs: []instancev1alpha1.DefaultPrivilegeItem{
+				{
+					Schema:     "public",
+					ObjectType: "tables",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectPing()
+				m.ExpectExec("ALTER DEFAULT PRIVILEGES").
+					WillReturnError(errors.New("alter error"))
+			},
+			expectError:   true,
+			errorContains: "failed to apply default privilege",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+			databaseName := "testdb"
+			roleName := "testrole"
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = applyGrantsWithDB(ctx, db, databaseName, roleName, tt.grants, tt.defaultPrivs)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
