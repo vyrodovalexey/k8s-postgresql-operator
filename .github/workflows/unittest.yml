@@ -22,7 +22,7 @@ jobs:
         run: go mod download
 
       - name: Run unit tests
-        run: make test
+        run: go test ./...
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
