@@ -378,25 +378,6 @@ make lint-fix
 make lint-config
 ```
 
-#### Running Tests
-
-Run unit tests:
-
-```bash
-# Run all tests (controllers, webhooks, and internal packages)
-make test
-```
-
-Run end-to-end tests (requires Kind):
-
-```bash
-# Set up Kind cluster and run e2e tests
-make test-e2e
-
-# Clean up Kind cluster
-make cleanup-test-e2e
-```
-
 #### View Available Make Targets
 
 See all available Make targets with descriptions:
