@@ -17,12 +17,14 @@ limitations under the License.
 package cert
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -174,4 +176,273 @@ MIIEpAIBAAKCAQEAyoursTrulyaFakeKeyForTestingPurposesOnly
 	if err != nil {
 		assert.Contains(t, err.Error(), "failed to load certificate")
 	}
+}
+
+// TestLoadCert_ValidCertificate tests LoadCert with a valid certificate
+func TestLoadCert_ValidCertificate(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a valid certificate using the provider
+	opts := SelfSignedProviderOptions{
+		ServiceName: "test-service",
+		Namespace:   "test-namespace",
+		RestConfig:  &rest.Config{Host: "https://test"},
+	}
+
+	provider, err := NewSelfSignedProvider(opts)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cert, err := provider.IssueCertificate(ctx, "test-service", "test-namespace")
+	require.NoError(t, err)
+
+	// Write the certificate to files
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	err = os.WriteFile(certPath, cert.CertPEM, 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(keyPath, cert.KeyPEM, 0600)
+	require.NoError(t, err)
+
+	// Load the certificate
+	loadedCert, err := LoadCert(certPath, keyPath)
+	require.NoError(t, err)
+	assert.NotNil(t, loadedCert)
+}
+
+// TestWriteCertFromSecret_Success tests writeCertFromSecret with valid data
+func TestWriteCertFromSecret_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	// Create a mock secret with valid data
+	secret := &corev1.Secret{
+		Data: map[string][]byte{
+			"tls.crt": []byte("cert-data"),
+			"tls.key": []byte("key-data"),
+		},
+	}
+
+	outCertPath, outKeyPath, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.True(t, ok)
+	assert.Equal(t, certPath, outCertPath)
+	assert.Equal(t, keyPath, outKeyPath)
+
+	// Verify files were created
+	certData, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("cert-data"), certData)
+
+	keyData, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("key-data"), keyData)
+}
+
+// TestWriteCertFromSecret_MissingCert tests writeCertFromSecret with missing cert
+func TestWriteCertFromSecret_MissingCert(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	secret := &corev1.Secret{
+		Data: map[string][]byte{
+			"tls.key": []byte("key-data"),
+		},
+	}
+
+	_, _, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.False(t, ok)
+}
+
+// TestWriteCertFromSecret_MissingKey tests writeCertFromSecret with missing key
+func TestWriteCertFromSecret_MissingKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	secret := &corev1.Secret{
+		Data: map[string][]byte{
+			"tls.crt": []byte("cert-data"),
+		},
+	}
+
+	_, _, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.False(t, ok)
+}
+
+// TestWriteCertFromSecret_InvalidCertPath tests writeCertFromSecret with invalid cert path
+func TestWriteCertFromSecret_InvalidCertPath(t *testing.T) {
+	certPath := "/dev/null/invalid/tls.crt"
+	keyPath := "/tmp/tls.key"
+
+	secret := &corev1.Secret{
+		Data: map[string][]byte{
+			"tls.crt": []byte("cert-data"),
+			"tls.key": []byte("key-data"),
+		},
+	}
+
+	_, _, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.False(t, ok)
+}
+
+// TestWriteCertFromSecret_InvalidKeyPath tests writeCertFromSecret with invalid key path
+func TestWriteCertFromSecret_InvalidKeyPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := "/dev/null/invalid/tls.key"
+
+	secret := &corev1.Secret{
+		Data: map[string][]byte{
+			"tls.crt": []byte("cert-data"),
+			"tls.key": []byte("key-data"),
+		},
+	}
+
+	_, _, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.False(t, ok)
+}
+
+// TestWriteCertFromSecret_EmptyData tests writeCertFromSecret with empty data
+func TestWriteCertFromSecret_EmptyData(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	secret := &corev1.Secret{
+		Data: map[string][]byte{},
+	}
+
+	_, _, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.False(t, ok)
+}
+
+// TestWriteCertFromSecret_NilData tests writeCertFromSecret with nil data
+func TestWriteCertFromSecret_NilData(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	secret := &corev1.Secret{
+		Data: nil,
+	}
+
+	_, _, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.False(t, ok)
+}
+
+// TestWriteCertFromSecret_LargeData tests writeCertFromSecret with large data
+func TestWriteCertFromSecret_LargeData(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	// Create large data
+	largeCert := make([]byte, 1024*1024) // 1MB
+	largeKey := make([]byte, 1024*1024)  // 1MB
+	for i := range largeCert {
+		largeCert[i] = byte(i % 256)
+		largeKey[i] = byte((i + 1) % 256)
+	}
+
+	secret := &corev1.Secret{
+		Data: map[string][]byte{
+			"tls.crt": largeCert,
+			"tls.key": largeKey,
+		},
+	}
+
+	outCertPath, outKeyPath, ok := writeCertFromSecret(secret, certPath, keyPath)
+	assert.True(t, ok)
+	assert.Equal(t, certPath, outCertPath)
+	assert.Equal(t, keyPath, outKeyPath)
+
+	// Verify files were created with correct content
+	certData, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	assert.Equal(t, largeCert, certData)
+
+	keyData, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, largeKey, keyData)
+}
+
+// TestLoadCert_ValidCertificateWithProvider tests LoadCert with a valid certificate from provider
+func TestLoadCert_ValidCertificateWithProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a valid certificate using the provider
+	opts := SelfSignedProviderOptions{
+		ServiceName: "test-service",
+		Namespace:   "test-namespace",
+		RestConfig:  &rest.Config{Host: "https://test"},
+	}
+
+	provider, err := NewSelfSignedProvider(opts)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cert, err := provider.IssueCertificate(ctx, "test-service", "test-namespace")
+	require.NoError(t, err)
+
+	// Write the certificate to files
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	err = os.WriteFile(certPath, cert.CertPEM, 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(keyPath, cert.KeyPEM, 0600)
+	require.NoError(t, err)
+
+	// Load the certificate
+	loadedCert, err := LoadCert(certPath, keyPath)
+	require.NoError(t, err)
+	assert.NotNil(t, loadedCert)
+
+	// Verify the loaded certificate has the expected properties
+	assert.NotNil(t, loadedCert.Certificate)
+	assert.NotEmpty(t, loadedCert.Certificate)
+}
+
+// TestLoadCert_MismatchedCertAndKey tests LoadCert with mismatched cert and key
+func TestLoadCert_MismatchedCertAndKey(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create two different certificates
+	opts1 := SelfSignedProviderOptions{
+		ServiceName: "service1",
+		Namespace:   "namespace1",
+		RestConfig:  &rest.Config{Host: "https://test"},
+	}
+	provider1, err := NewSelfSignedProvider(opts1)
+	require.NoError(t, err)
+
+	opts2 := SelfSignedProviderOptions{
+		ServiceName: "service2",
+		Namespace:   "namespace2",
+		RestConfig:  &rest.Config{Host: "https://test"},
+	}
+	provider2, err := NewSelfSignedProvider(opts2)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cert1, err := provider1.IssueCertificate(ctx, "service1", "namespace1")
+	require.NoError(t, err)
+	cert2, err := provider2.IssueCertificate(ctx, "service2", "namespace2")
+	require.NoError(t, err)
+
+	// Write cert from one and key from another
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+
+	err = os.WriteFile(certPath, cert1.CertPEM, 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(keyPath, cert2.KeyPEM, 0600)
+	require.NoError(t, err)
+
+	// Load should fail because cert and key don't match
+	_, err = LoadCert(certPath, keyPath)
+	assert.Error(t, err)
 }

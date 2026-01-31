@@ -31,7 +31,7 @@ import (
 func testPostgreSQLConnection(
 	ctx context.Context,
 	postgresqlObj *instancev1alpha1.Postgresql,
-	vaultClient *vault.Client,
+	vaultClient vault.ClientInterface,
 	log *zap.SugaredLogger,
 	retries int,
 	retryTimeout time.Duration) error {

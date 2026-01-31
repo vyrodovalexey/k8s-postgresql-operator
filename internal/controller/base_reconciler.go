@@ -26,6 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/events"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/ratelimit"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -35,25 +37,48 @@ type BaseReconcilerConfig struct {
 	Scheme                      *runtime.Scheme
 	VaultClient                 *vault.Client
 	Log                         *zap.SugaredLogger
+	EventRecorder               *events.EventRecorder
 	PostgresqlConnectionRetries int
 	PostgresqlConnectionTimeout time.Duration
 	VaultAvailabilityRetries    int
 	VaultAvailabilityRetryDelay time.Duration
+	PostgresqlRateLimiter       *ratelimit.RateLimiter
+	VaultRateLimiter            *ratelimit.RateLimiter
 }
 
 // NewBaseReconcilerConfig creates a new BaseReconcilerConfig from manager, vault client, logger, and config
 func NewBaseReconcilerConfig(
 	mgr ctrl.Manager, vaultClient *vault.Client, lg *zap.SugaredLogger, cfg *config.Config,
 ) BaseReconcilerConfig {
+	// Create event recorder
+	eventRecorder := events.NewEventRecorder(
+		mgr.GetEventRecorderFor("postgresql-operator"),
+	)
+
+	// Create rate limiters for external service calls
+	postgresqlRateLimiter := ratelimit.NewRateLimiter(
+		ratelimit.ServiceTypePostgreSQL,
+		cfg.PostgresqlRateLimitPerSecond,
+		cfg.PostgresqlRateLimitBurst,
+	)
+	vaultRateLimiter := ratelimit.NewRateLimiter(
+		ratelimit.ServiceTypeVault,
+		cfg.VaultRateLimitPerSecond,
+		cfg.VaultRateLimitBurst,
+	)
+
 	return BaseReconcilerConfig{
 		Client:                      mgr.GetClient(),
 		Scheme:                      mgr.GetScheme(),
 		VaultClient:                 vaultClient,
 		Log:                         lg,
+		EventRecorder:               eventRecorder,
 		PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
 		PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
 		VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
 		VaultAvailabilityRetryDelay: cfg.VaultAvailabilityRetryDelay(),
+		PostgresqlRateLimiter:       postgresqlRateLimiter,
+		VaultRateLimiter:            vaultRateLimiter,
 	}
 }
 

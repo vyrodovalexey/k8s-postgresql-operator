@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "k8s-postgresql-operator Helm Chart Values",
+  "description": "Schema for k8s-postgresql-operator Helm chart values",
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Global settings",
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "description": "Global Docker image registry"
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "Global Docker registry secret names",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "description": "Operator image configuration",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Image repository"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "description": "Image pull policy",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag"
+        }
+      },
+      "required": ["repository"]
+    },
+    "replicaCount": {
+      "type": "integer",
+      "description": "Number of replicas",
+      "minimum": 1
+    },
+    "nameOverride": {
+      "type": "string",
+      "description": "Override the name of the chart"
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Override the full name of the chart"
+    },
+    "serviceAccount": {
+      "type": "object",
+      "description": "Service account configuration",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create service account"
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Service account annotations"
+        },
+        "name": {
+          "type": "string",
+          "description": "Service account name"
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod security context",
+      "properties": {
+        "runAsNonRoot": {
+          "type": "boolean"
+        },
+        "seccompProfile": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["RuntimeDefault", "Localhost", "Unconfined"]
+            }
+          }
+        }
+      }
+    },
+    "securityContext": {
+      "type": "object",
+      "description": "Container security context",
+      "properties": {
+        "allowPrivilegeEscalation": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "drop": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Resource limits and requests",
+      "properties": {
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "string"
+            },
+            "memory": {
+              "type": "string"
+            }
+          }
+        },
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "string"
+            },
+            "memory": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "description": "Node selector"
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Tolerations",
+      "items": {
+        "type": "object"
+      }
+    },
+    "affinity": {
+      "type": "object",
+      "description": "Affinity rules"
+    },
+    "podAnnotations": {
+      "type": "object",
+      "description": "Pod annotations"
+    },
+    "podLabels": {
+      "type": "object",
+      "description": "Pod labels"
+    },
+    "vault": {
+      "type": "object",
+      "description": "Vault configuration",
+      "properties": {
+        "addr": {
+          "type": "string",
+          "description": "Vault server address",
+          "format": "uri"
+        },
+        "role": {
+          "type": "string",
+          "description": "Vault role for Kubernetes auth"
+        },
+        "mountPoint": {
+          "type": "string",
+          "description": "Vault KV mount point"
+        },
+        "secretPath": {
+          "type": "string",
+          "description": "Vault secret path prefix"
+        }
+      },
+      "required": ["addr", "role", "mountPoint", "secretPath"]
+    },
+    "vaultPKI": {
+      "type": "object",
+      "description": "Vault PKI configuration for webhook certificates",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Vault PKI for webhook certificates"
+        },
+        "mountPath": {
+          "type": "string",
+          "description": "Vault PKI secrets engine mount path"
+        },
+        "role": {
+          "type": "string",
+          "description": "Vault PKI role name for certificate issuance"
+        },
+        "ttl": {
+          "type": "string",
+          "description": "TTL for issued certificates",
+          "pattern": "^[0-9]+[hms]$"
+        },
+        "renewalBuffer": {
+          "type": "string",
+          "description": "Time before expiry to trigger certificate renewal",
+          "pattern": "^[0-9]+[hms]$"
+        }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "description": "Webhook configuration",
+      "properties": {
+        "certPath": {
+          "type": "string",
+          "description": "Webhook certificate path"
+        },
+        "certName": {
+          "type": "string",
+          "description": "Webhook certificate file name"
+        },
+        "certKey": {
+          "type": "string",
+          "description": "Webhook key file name"
+        },
+        "serverPort": {
+          "type": "integer",
+          "description": "Webhook server port",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "serverAddr": {
+          "type": "string",
+          "description": "Webhook server address"
+        },
+        "k8sServiceName": {
+          "type": "string",
+          "description": "Kubernetes service name for webhook"
+        },
+        "names": {
+          "type": "object",
+          "description": "Webhook names for each resource type",
+          "properties": {
+            "postgresql": {
+              "type": "string"
+            },
+            "user": {
+              "type": "string"
+            },
+            "database": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            },
+            "rolegroup": {
+              "type": "string"
+            },
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "k8s": {
+      "type": "object",
+      "description": "Kubernetes paths",
+      "properties": {
+        "tokenPath": {
+          "type": "string",
+          "description": "Path to Kubernetes service account token"
+        },
+        "namespacePath": {
+          "type": "string",
+          "description": "Path to Kubernetes namespace file"
+        }
+      }
+    },
+    "operator": {
+      "type": "object",
+      "description": "Operator configuration",
+      "properties": {
+        "enableLeaderElection": {
+          "type": "boolean",
+          "description": "Enable leader election"
+        },
+        "probeAddr": {
+          "type": "string",
+          "description": "Health probe bind address"
+        },
+        "excludeUserList": {
+          "type": "string",
+          "description": "Comma-separated list of excluded users"
+        },
+        "postgresqlConnectionRetries": {
+          "type": "integer",
+          "description": "PostgreSQL connection retries",
+          "minimum": 1
+        },
+        "postgresqlConnectionTimeoutSecs": {
+          "type": "integer",
+          "description": "PostgreSQL connection timeout in seconds",
+          "minimum": 1
+        },
+        "vaultAvailabilityRetries": {
+          "type": "integer",
+          "description": "Vault availability retries",
+          "minimum": 1
+        },
+        "vaultAvailabilityRetryDelaySecs": {
+          "type": "integer",
+          "description": "Vault availability retry delay in seconds",
+          "minimum": 1
+        },
+        "vaultAuthTimeoutSecs": {
+          "type": "integer",
+          "description": "Vault authentication timeout in seconds",
+          "minimum": 1
+        },
+        "logLevel": {
+          "type": "string",
+          "description": "Log level: debug, info, warn, error",
+          "enum": ["debug", "info", "warn", "error"]
+        },
+        "postgresqlRateLimitPerSecond": {
+          "type": "number",
+          "description": "Rate limit for PostgreSQL connections per second",
+          "minimum": 0.1
+        },
+        "postgresqlRateLimitBurst": {
+          "type": "integer",
+          "description": "Burst limit for PostgreSQL connections",
+          "minimum": 1
+        },
+        "vaultRateLimitPerSecond": {
+          "type": "number",
+          "description": "Rate limit for Vault requests per second",
+          "minimum": 0.1
+        },
+        "vaultRateLimitBurst": {
+          "type": "integer",
+          "description": "Burst limit for Vault requests",
+          "minimum": 1
+        },
+        "retry": {
+          "type": "object",
+          "description": "Retry configuration (exponential backoff)",
+          "properties": {
+            "initialIntervalMs": {
+              "type": "integer",
+              "description": "Initial interval in milliseconds for exponential backoff",
+              "minimum": 1
+            },
+            "maxIntervalSecs": {
+              "type": "integer",
+              "description": "Maximum interval in seconds for exponential backoff",
+              "minimum": 1
+            },
+            "maxElapsedTimeSecs": {
+              "type": "integer",
+              "description": "Maximum elapsed time in seconds for all retries",
+              "minimum": 1
+            },
+            "multiplier": {
+              "type": "number",
+              "description": "Multiplier for exponential backoff interval growth",
+              "minimum": 1.0
+            },
+            "randomizationFactor": {
+              "type": "number",
+              "description": "Randomization factor (jitter) for exponential backoff",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "description": "Service configuration",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Service type",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+        },
+        "port": {
+          "type": "integer",
+          "description": "Service port",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "targetPort": {
+          "type": "integer",
+          "description": "Target port",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "description": "RBAC configuration",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create RBAC resources"
+        }
+      }
+    },
+    "webhooks": {
+      "type": "object",
+      "description": "ValidatingWebhookConfiguration settings",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable webhooks"
+        },
+        "failurePolicy": {
+          "type": "string",
+          "description": "Webhook failure policy",
+          "enum": ["Fail", "Ignore"]
+        },
+        "sideEffects": {
+          "type": "string",
+          "description": "Webhook side effects",
+          "enum": ["None", "NoneOnDryRun", "Some", "Unknown"]
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "description": "Pod Disruption Budget configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Pod Disruption Budget"
+        },
+        "minAvailable": {
+          "type": ["integer", "string"],
+          "description": "Minimum available pods"
+        },
+        "maxUnavailable": {
+          "type": ["integer", "string"],
+          "description": "Maximum unavailable pods"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Metrics configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable metrics"
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "description": "ServiceMonitor configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable ServiceMonitor"
+            },
+            "namespace": {
+              "type": "string",
+              "description": "ServiceMonitor namespace"
+            },
+            "interval": {
+              "type": "string",
+              "description": "Scrape interval"
+            },
+            "scrapeTimeout": {
+              "type": "string",
+              "description": "Scrape timeout"
+            },
+            "labels": {
+              "type": "object",
+              "description": "Additional labels for ServiceMonitor"
+            }
+          }
+        }
+      }
+    }
+  }
+}

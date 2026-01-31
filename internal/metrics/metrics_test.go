@@ -363,3 +363,363 @@ func TestConcurrentUpdates(t *testing.T) {
 	assert.GreaterOrEqual(t, *metric.Gauge.Value, float64(0))
 	assert.LessOrEqual(t, *metric.Gauge.Value, float64(9))
 }
+
+// TestRecordRateLimitWait_TableDriven tests RecordRateLimitWait with various scenarios
+func TestRecordRateLimitWait_TableDriven(t *testing.T) {
+	// Reset metrics before test
+	RateLimitWaitTotal.Reset()
+
+	tests := []struct {
+		name    string
+		service string
+		result  string
+	}{
+		{
+			name:    "postgresql success",
+			service: "postgresql",
+			result:  "success",
+		},
+		{
+			name:    "postgresql error",
+			service: "postgresql",
+			result:  "error",
+		},
+		{
+			name:    "vault success",
+			service: "vault",
+			result:  "success",
+		},
+		{
+			name:    "vault error",
+			service: "vault",
+			result:  "error",
+		},
+		{
+			name:    "custom service",
+			service: "custom",
+			result:  "success",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Record the metric
+			RecordRateLimitWait(tt.service, tt.result)
+
+			// Verify the metric was recorded
+			metric := &dto.Metric{}
+			err := RateLimitWaitTotal.WithLabelValues(tt.service, tt.result).Write(metric)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, *metric.Counter.Value, float64(1))
+		})
+	}
+}
+
+// TestRecordRateLimitAllow_TableDriven tests RecordRateLimitAllow with various scenarios
+func TestRecordRateLimitAllow_TableDriven(t *testing.T) {
+	// Reset metrics before test
+	RateLimitAllowTotal.Reset()
+
+	tests := []struct {
+		name    string
+		service string
+		result  string
+	}{
+		{
+			name:    "postgresql allowed",
+			service: "postgresql",
+			result:  "allowed",
+		},
+		{
+			name:    "postgresql denied",
+			service: "postgresql",
+			result:  "denied",
+		},
+		{
+			name:    "vault allowed",
+			service: "vault",
+			result:  "allowed",
+		},
+		{
+			name:    "vault denied",
+			service: "vault",
+			result:  "denied",
+		},
+		{
+			name:    "custom service allowed",
+			service: "custom",
+			result:  "allowed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Record the metric
+			RecordRateLimitAllow(tt.service, tt.result)
+
+			// Verify the metric was recorded
+			metric := &dto.Metric{}
+			err := RateLimitAllowTotal.WithLabelValues(tt.service, tt.result).Write(metric)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, *metric.Counter.Value, float64(1))
+		})
+	}
+}
+
+// TestRecordOperationDuration_TableDriven tests RecordOperationDuration with various scenarios
+func TestRecordOperationDuration_TableDriven(t *testing.T) {
+	// Reset metrics before test
+	OperationDuration.Reset()
+
+	tests := []struct {
+		name            string
+		service         string
+		operation       string
+		result          string
+		durationSeconds float64
+	}{
+		{
+			name:            "postgresql create success",
+			service:         "postgresql",
+			operation:       "create_database",
+			result:          "success",
+			durationSeconds: 0.5,
+		},
+		{
+			name:            "postgresql create error",
+			service:         "postgresql",
+			operation:       "create_database",
+			result:          "error",
+			durationSeconds: 1.0,
+		},
+		{
+			name:            "vault read success",
+			service:         "vault",
+			operation:       "read_secret",
+			result:          "success",
+			durationSeconds: 0.1,
+		},
+		{
+			name:            "vault write error",
+			service:         "vault",
+			operation:       "write_secret",
+			result:          "error",
+			durationSeconds: 2.0,
+		},
+		{
+			name:            "very fast operation",
+			service:         "postgresql",
+			operation:       "ping",
+			result:          "success",
+			durationSeconds: 0.001,
+		},
+		{
+			name:            "slow operation",
+			service:         "postgresql",
+			operation:       "backup",
+			result:          "success",
+			durationSeconds: 10.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Record the metric - this should not panic
+			RecordOperationDuration(tt.service, tt.operation, tt.result, tt.durationSeconds)
+			// Histogram metrics are recorded successfully if no panic occurs
+		})
+	}
+}
+
+// TestRecordOperation_TableDriven tests RecordOperation with various scenarios
+func TestRecordOperation_TableDriven(t *testing.T) {
+	// Reset metrics before test
+	OperationTotal.Reset()
+
+	tests := []struct {
+		name      string
+		service   string
+		operation string
+		result    string
+	}{
+		{
+			name:      "postgresql create success",
+			service:   "postgresql",
+			operation: "create_database",
+			result:    "success",
+		},
+		{
+			name:      "postgresql create error",
+			service:   "postgresql",
+			operation: "create_database",
+			result:    "error",
+		},
+		{
+			name:      "postgresql update success",
+			service:   "postgresql",
+			operation: "update_user",
+			result:    "success",
+		},
+		{
+			name:      "vault read success",
+			service:   "vault",
+			operation: "read_secret",
+			result:    "success",
+		},
+		{
+			name:      "vault write error",
+			service:   "vault",
+			operation: "write_secret",
+			result:    "error",
+		},
+		{
+			name:      "custom operation",
+			service:   "custom",
+			operation: "custom_op",
+			result:    "success",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Record the metric
+			RecordOperation(tt.service, tt.operation, tt.result)
+
+			// Verify the metric was recorded
+			metric := &dto.Metric{}
+			err := OperationTotal.WithLabelValues(tt.service, tt.operation, tt.result).Write(metric)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, *metric.Counter.Value, float64(1))
+		})
+	}
+}
+
+// TestRecordRateLimitWait_MultipleRecords tests multiple recordings
+func TestRecordRateLimitWait_MultipleRecords(t *testing.T) {
+	RateLimitWaitTotal.Reset()
+
+	// Record multiple times
+	for i := 0; i < 5; i++ {
+		RecordRateLimitWait("postgresql", "success")
+	}
+
+	metric := &dto.Metric{}
+	err := RateLimitWaitTotal.WithLabelValues("postgresql", "success").Write(metric)
+	require.NoError(t, err)
+	assert.Equal(t, float64(5), *metric.Counter.Value)
+}
+
+// TestRecordRateLimitAllow_MultipleRecords tests multiple recordings
+func TestRecordRateLimitAllow_MultipleRecords(t *testing.T) {
+	RateLimitAllowTotal.Reset()
+
+	// Record multiple times
+	for i := 0; i < 3; i++ {
+		RecordRateLimitAllow("vault", "allowed")
+	}
+	for i := 0; i < 2; i++ {
+		RecordRateLimitAllow("vault", "denied")
+	}
+
+	metricAllowed := &dto.Metric{}
+	err := RateLimitAllowTotal.WithLabelValues("vault", "allowed").Write(metricAllowed)
+	require.NoError(t, err)
+	assert.Equal(t, float64(3), *metricAllowed.Counter.Value)
+
+	metricDenied := &dto.Metric{}
+	err = RateLimitAllowTotal.WithLabelValues("vault", "denied").Write(metricDenied)
+	require.NoError(t, err)
+	assert.Equal(t, float64(2), *metricDenied.Counter.Value)
+}
+
+// TestRecordOperationDuration_MultipleRecords tests multiple duration recordings
+func TestRecordOperationDuration_MultipleRecords(t *testing.T) {
+	OperationDuration.Reset()
+
+	// Record multiple durations - should not panic
+	durations := []float64{0.1, 0.2, 0.3, 0.4, 0.5}
+	for _, d := range durations {
+		RecordOperationDuration("postgresql", "query", "success", d)
+	}
+	// If we get here without panic, the test passes
+}
+
+// TestRecordOperation_MultipleRecords tests multiple operation recordings
+func TestRecordOperation_MultipleRecords(t *testing.T) {
+	OperationTotal.Reset()
+
+	// Record multiple operations
+	for i := 0; i < 10; i++ {
+		RecordOperation("postgresql", "create_user", "success")
+	}
+
+	metric := &dto.Metric{}
+	err := OperationTotal.WithLabelValues("postgresql", "create_user", "success").Write(metric)
+	require.NoError(t, err)
+	assert.Equal(t, float64(10), *metric.Counter.Value)
+}
+
+// TestMetrics_ConcurrentRecording tests concurrent metric recording
+func TestMetrics_ConcurrentRecording(t *testing.T) {
+	RateLimitWaitTotal.Reset()
+	RateLimitAllowTotal.Reset()
+	OperationTotal.Reset()
+	OperationDuration.Reset()
+
+	done := make(chan bool, 40)
+
+	// Concurrent rate limit wait recordings
+	for i := 0; i < 10; i++ {
+		go func() {
+			RecordRateLimitWait("postgresql", "success")
+			done <- true
+		}()
+	}
+
+	// Concurrent rate limit allow recordings
+	for i := 0; i < 10; i++ {
+		go func() {
+			RecordRateLimitAllow("vault", "allowed")
+			done <- true
+		}()
+	}
+
+	// Concurrent operation recordings
+	for i := 0; i < 10; i++ {
+		go func() {
+			RecordOperation("postgresql", "create", "success")
+			done <- true
+		}()
+	}
+
+	// Concurrent duration recordings
+	for i := 0; i < 10; i++ {
+		go func(d float64) {
+			RecordOperationDuration("vault", "read", "success", d)
+			done <- true
+		}(float64(i) * 0.1)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 40; i++ {
+		<-done
+	}
+
+	// Verify counts
+	metric1 := &dto.Metric{}
+	err := RateLimitWaitTotal.WithLabelValues("postgresql", "success").Write(metric1)
+	require.NoError(t, err)
+	assert.Equal(t, float64(10), *metric1.Counter.Value)
+
+	metric2 := &dto.Metric{}
+	err = RateLimitAllowTotal.WithLabelValues("vault", "allowed").Write(metric2)
+	require.NoError(t, err)
+	assert.Equal(t, float64(10), *metric2.Counter.Value)
+
+	metric3 := &dto.Metric{}
+	err = OperationTotal.WithLabelValues("postgresql", "create", "success").Write(metric3)
+	require.NoError(t, err)
+	assert.Equal(t, float64(10), *metric3.Counter.Value)
+
+	// Duration recordings are verified by not panicking during concurrent access
+}

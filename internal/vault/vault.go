@@ -19,10 +19,14 @@ package vault
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
 )
+
+// DefaultAuthTimeout is the default timeout for Vault authentication operations
+const DefaultAuthTimeout = 30 * time.Second
 
 // Client wraps the Vault API client
 type Client struct {
@@ -31,13 +35,44 @@ type Client struct {
 	vaultSecretPath string
 }
 
+// ClientOptions contains optional configuration for creating a Vault client
+type ClientOptions struct {
+	// AuthTimeout is the timeout for Vault authentication (default: 30 seconds)
+	AuthTimeout time.Duration
+}
+
+// DefaultClientOptions returns the default client options
+func DefaultClientOptions() ClientOptions {
+	return ClientOptions{
+		AuthTimeout: DefaultAuthTimeout,
+	}
+}
+
 // NewClient creates a new Vault client using Kubernetes authentication
 // VAULT_ADDR: Vault server address (required)
 // VAULT_ROLE: Vault role for Kubernetes authentication (required)
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
-func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
+// This function uses the default authentication timeout of 30 seconds
+func NewClient(
+	ctx context.Context, vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string,
+) (*Client, error) {
+	return NewClientWithOptions(
+		ctx, vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath, DefaultClientOptions())
+}
+
+// NewClientWithOptions creates a new Vault client using Kubernetes authentication with custom options
+func NewClientWithOptions(
+	ctx context.Context, vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string,
+	opts ClientOptions,
+) (*Client, error) {
 	if vaultRole == "" {
 		return nil, fmt.Errorf("environment variable VAULT_ROLE is not set (required for Kubernetes auth)")
+	}
+
+	// Use default timeout if not specified
+	authTimeout := opts.AuthTimeout
+	if authTimeout <= 0 {
+		authTimeout = DefaultAuthTimeout
 	}
 
 	config := api.DefaultConfig()
@@ -57,9 +92,17 @@ func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath
 		return nil, fmt.Errorf("failed to create Kubernetes auth method: %w", err)
 	}
 
+	// Create a timeout context for authentication
+	authCtx, cancel := context.WithTimeout(ctx, authTimeout)
+	defer cancel()
+
 	// Authenticate with Vault using Kubernetes auth
-	authInfo, err := client.Auth().Login(context.Background(), k8sAuth)
+	authInfo, err := client.Auth().Login(authCtx, k8sAuth)
 	if err != nil {
+		// Check if the error is due to context timeout/cancellation
+		if authCtx.Err() != nil {
+			return nil, fmt.Errorf("vault authentication timed out after %v: %w", authTimeout, authCtx.Err())
+		}
 		return nil, fmt.Errorf("failed to authenticate with Vault using Kubernetes auth: %w", err)
 	}
 
@@ -72,7 +115,8 @@ func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath
 
 // CheckHealth checks if Vault is available and healthy
 func (c *Client) CheckHealth(ctx context.Context) error {
-	health, err := c.client.Sys().Health()
+	// Use context-aware health check
+	health, err := c.client.Sys().HealthWithContext(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check Vault health: %w", err)
 	}

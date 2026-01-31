@@ -1,14 +1,15 @@
 # Build the manager binary
-# Build the manager binary
-FROM golang:1.24-alpine3.23 AS builder
+FROM golang:1.25.6-alpine3.23 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
 WORKDIR /workspace
+
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
-# cache deps before building and copying source so that we don't need to re-download as much
+
+# Cache deps before building and copying source so that we don't need to re-download as much
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
@@ -25,20 +26,37 @@ COPY internal/ internal/
 RUN CGO_ENABLED=0 \
     GOOS=${TARGETOS:-linux} \
     GOARCH=${TARGETARCH} \
-    go build -a -o manager github.com/vyrodovalexey/k8s-postgresql-operator/cmd
+    go build -a -ldflags="-s -w" -trimpath -o manager github.com/vyrodovalexey/k8s-postgresql-operator/cmd
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
+# Final stage - minimal runtime image
 FROM alpine:3.23
-RUN apk update \
-    && apk upgrade --ignore alpine-baselayout \
-    && apk add curl jq ca-certificates strace bash wget tar tzdata \
-    && addgroup -g 1001 -S web-data \
-    && adduser -u 1001 -D -S -G web-data --home /app web-data \
-    && chown -R web-data:web-data /app
 
-USER 1001
+# OCI Labels
+LABEL org.opencontainers.image.title="k8s-postgresql-operator" \
+      org.opencontainers.image.description="Kubernetes operator for managing PostgreSQL databases" \
+      org.opencontainers.image.url="https://github.com/vyrodovalexey/k8s-postgresql-operator" \
+      org.opencontainers.image.source="https://github.com/vyrodovalexey/k8s-postgresql-operator" \
+      org.opencontainers.image.vendor="vyrodovalexey" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+# Install only essential runtime dependencies (sorted alphanumerically)
+# ca-certificates: Required for TLS connections
+# tzdata: Required for timezone support
+RUN apk update --no-cache \
+    && apk upgrade --no-cache --ignore alpine-baselayout \
+    && apk add --no-cache ca-certificates tzdata \
+    && addgroup -g 65532 -S nonroot \
+    && adduser -u 65532 -D -S -G nonroot -H -h /app nonroot \
+    && rm -rf /var/cache/apk/*
+
+# Use non-root user (65532 is standard for distroless compatibility)
+USER 65532:65532
 WORKDIR /app
-COPY --from=builder /workspace/manager .
+
+# Copy the binary from builder
+COPY --from=builder --chown=65532:65532 /workspace/manager .
+
+# Note: Health checks are handled by Kubernetes liveness/readiness probes
+# defined in the Helm chart deployment template
 
 ENTRYPOINT ["/app/manager"]

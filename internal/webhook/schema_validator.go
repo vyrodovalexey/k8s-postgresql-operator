@@ -42,22 +42,27 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	// Check if postgresqlID, schema, and owner are specified
+	// Validate required fields - deny if any required field is missing
 	if schema.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required but not specified")
 	}
 	if schema.Spec.Schema == "" {
-		return admission.Allowed("No schema name specified")
+		return admission.Denied("schema name is required but not specified")
 	}
 	if schema.Spec.Owner == "" {
-		return admission.Allowed("No owner specified")
+		return admission.Denied("owner is required but not specified")
+	}
+	if schema.Spec.Database == "" {
+		return admission.Denied("database is required but not specified")
 	}
 
 	postgresqlID := schema.Spec.PostgresqlID
 	schemaName := schema.Spec.Schema
+	database := schema.Spec.Database
 
 	v.Log.Infow("Validating Schema resource",
-		"name", schema.Name, "namespace", schema.Namespace, "postgresqlID", postgresqlID, "schema", schemaName)
+		"name", schema.Name, "namespace", schema.Namespace,
+		"postgresqlID", postgresqlID, "schema", schemaName, "database", database)
 
 	// Check Vault availability if Vault client is configured
 	if v.VaultClient != nil {
@@ -103,6 +108,7 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 	}
 
 	v.Log.Infow("Validation passed",
-		"name", schema.Name, "namespace", schema.Namespace, "postgresqlID", postgresqlID, "schema", schemaName)
-	return admission.Allowed("No duplicate postgresqlID and schema combination found in cluster")
+		"name", schema.Name, "namespace", schema.Namespace,
+		"postgresqlID", postgresqlID, "schema", schemaName, "database", database)
+	return admission.Allowed("Schema validation passed")
 }

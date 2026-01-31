@@ -25,12 +25,12 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestGetVaultCredentialsWithRetry_NilClient(t *testing.T) {
+func TestGetVaultCredentialsWithRetryAndRateLimit_NilClient(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctx := context.Background()
 
-	username, password, err := getVaultCredentialsWithRetry(
-		ctx, nil, "test-id", logger, 3, 100*time.Millisecond)
+	username, password, err := getVaultCredentialsWithRetryAndRateLimit(
+		ctx, nil, "test-id", logger, 3, 100*time.Millisecond, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "vault client is not configured")
@@ -38,24 +38,24 @@ func TestGetVaultCredentialsWithRetry_NilClient(t *testing.T) {
 	assert.Empty(t, password)
 }
 
-func TestGetVaultUserCredentialsWithRetry_NilClient(t *testing.T) {
+func TestGetVaultUserCredentialsWithRetryAndRateLimit_NilClient(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctx := context.Background()
 
-	password, err := getVaultUserCredentialsWithRetry(
-		ctx, nil, "test-id", "user", logger, 3, 100*time.Millisecond)
+	password, err := getVaultUserCredentialsWithRetryAndRateLimit(
+		ctx, nil, "test-id", "user", logger, 3, 100*time.Millisecond, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "vault client is not configured")
 	assert.Empty(t, password)
 }
 
-func TestStoreVaultUserCredentialsWithRetry_NilClient(t *testing.T) {
+func TestStoreVaultUserCredentialsWithRetryAndRateLimit_NilClient(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctx := context.Background()
 
-	err := storeVaultUserCredentialsWithRetry(
-		ctx, nil, "test-id", "user", "pass", logger, 3, 100*time.Millisecond)
+	err := storeVaultUserCredentialsWithRetryAndRateLimit(
+		ctx, nil, "test-id", "user", "pass", logger, 3, 100*time.Millisecond, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "vault client is not configured")

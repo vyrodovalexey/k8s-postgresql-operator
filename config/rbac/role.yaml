@@ -49,6 +49,7 @@ rules:
   - postgresql-operator.vyrodovalexey.github.com
   resources:
   - databases
+  - users
   verbs:
   - get
   - list
@@ -85,7 +86,6 @@ rules:
   - postgresqls
   - rolegroups
   - schemas
-  - users
   verbs:
   - get
   - list

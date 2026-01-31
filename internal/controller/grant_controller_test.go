@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -127,7 +128,7 @@ func TestUpdateGrantCondition(t *testing.T) {
 	}
 
 	// Test adding new condition
-	updateGrantCondition(grant, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
+	controllerhelpers.UpdateGrantCondition(grant, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
 	assert.Len(t, grant.Status.Conditions, 1)
 	assert.Equal(t, "Ready", grant.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionTrue, grant.Status.Conditions[0].Status)
@@ -135,7 +136,7 @@ func TestUpdateGrantCondition(t *testing.T) {
 	assert.Equal(t, "Test message", grant.Status.Conditions[0].Message)
 
 	// Test updating existing condition
-	updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "NewReason", "New message")
+	controllerhelpers.UpdateGrantCondition(grant, "Ready", metav1.ConditionFalse, "NewReason", "New message")
 	assert.Len(t, grant.Status.Conditions, 1)
 	assert.Equal(t, "Ready", grant.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionFalse, grant.Status.Conditions[0].Status)

@@ -22,32 +22,102 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/cenkalti/backoff/v4"
+	_ "github.com/lib/pq" // PostgreSQL driver
 	"go.uber.org/zap"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/constants"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
 const (
-	DefaultSSLMode = "require"
-	DefaultPort    = 5432
-	DefaultDB      = "postgres"
+	DefaultSSLMode        = "require"
+	DefaultPort           = 5432
+	DefaultConnectTimeout = 5
 )
 
-// TestConnection tests the connection to a PostgreSQL instance with retry logic
+// DefaultDB is the default PostgreSQL database name (uses constants.DefaultDatabaseName)
+var DefaultDB = constants.DefaultDatabaseName
+
+// ConnectionConfig holds all parameters needed to build a PostgreSQL connection string
+type ConnectionConfig struct {
+	Host           string
+	Port           int32
+	Username       string
+	Password       string
+	Database       string
+	SSLMode        string
+	ConnectTimeout int
+}
+
+// NewConnectionConfig creates a new ConnectionConfig with default values
+func NewConnectionConfig(host string, port int32, username, password, database, sslMode string) *ConnectionConfig {
+	if port == 0 {
+		port = DefaultPort
+	}
+	if database == "" {
+		database = DefaultDB
+	}
+	if sslMode == "" {
+		sslMode = DefaultSSLMode
+	}
+	return &ConnectionConfig{
+		Host:           host,
+		Port:           port,
+		Username:       username,
+		Password:       password,
+		Database:       database,
+		SSLMode:        sslMode,
+		ConnectTimeout: DefaultConnectTimeout,
+	}
+}
+
+// WithConnectTimeout sets a custom connect timeout
+func (c *ConnectionConfig) WithConnectTimeout(timeout int) *ConnectionConfig {
+	c.ConnectTimeout = timeout
+	return c
+}
+
+// BuildConnectionString builds a PostgreSQL connection string from the configuration
+func (c *ConnectionConfig) BuildConnectionString() string {
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=%d",
+		c.Host, c.Port, c.Username, c.Password, c.Database, c.SSLMode, c.ConnectTimeout)
+}
+
+// TestConnection tests the connection to a PostgreSQL instance with exponential backoff retry logic
+// The function respects context cancellation and will return early if the context is cancelled
 func TestConnection(
 	ctx context.Context, host string, port int32, database, username, password, sslMode string,
 	log *zap.SugaredLogger, retries int, retryTimeout time.Duration) (bool, error) {
-	var lastErr error
+	// Convert legacy parameters to RetryConfig
+	cfg := NewRetryConfigFromParams(retries, retryTimeout)
+	return TestConnectionWithConfig(ctx, host, port, database, username, password, sslMode, log, cfg)
+}
 
-	for attempt := 1; attempt <= retries; attempt++ {
+// TestConnectionWithConfig tests the connection to a PostgreSQL instance with configurable exponential backoff
+func TestConnectionWithConfig(
+	ctx context.Context, host string, port int32, database, username, password, sslMode string,
+	log *zap.SugaredLogger, cfg RetryConfig) (bool, error) {
+	b := newExponentialBackOff(cfg)
+	attempt := 0
+
+	for {
+		attempt++
+
+		// Check context before attempting connection
+		if err := ctx.Err(); err != nil {
+			log.Warnw("Context cancelled before connection attempt",
+				"host", host, "port", port, "attempt", attempt, "error", err)
+			return false, fmt.Errorf("connection test cancelled: %w", err)
+		}
+
 		log.Debugw("Attempting PostgreSQL connection test",
-			"host", host, "port", port, "attempt", attempt, "maxRetries", retries)
+			"host", host, "port", port, "attempt", attempt)
 
-		// Build connection string
-		connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-			host, port, username, password, database, sslMode)
+		// Build connection string using ConnectionConfig
+		connCfg := NewConnectionConfig(host, port, username, password, database, sslMode)
+		connStr := connCfg.BuildConnectionString()
 
 		// Create a context with timeout for the connection test
 		connCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -56,10 +126,18 @@ func TestConnection(
 		db, err := sql.Open("postgres", connStr)
 		if err != nil {
 			cancel()
-			lastErr = fmt.Errorf("failed to open database connection: %w", err)
-			log.Warnw("PostgreSQL connection attempt failed", "host", host, "port", port, "attempt", attempt, "error", lastErr)
-			if attempt < retries {
-				time.Sleep(retryTimeout)
+			log.Warnw("PostgreSQL connection attempt failed - failed to open connection",
+				"host", host, "port", port, "attempt", attempt, "error", err)
+
+			nextBackoff := b.NextBackOff()
+			if nextBackoff == backoff.Stop {
+				return false, fmt.Errorf("failed to connect to PostgreSQL after %d attempts (max elapsed time %v): %w",
+					attempt, cfg.MaxElapsedTime, err)
+			}
+
+			log.Debugw("Will retry connection", "nextRetryIn", nextBackoff)
+			if sleepErr := ContextAwareSleep(ctx, nextBackoff); sleepErr != nil {
+				return false, fmt.Errorf("connection test cancelled during backoff: %w", sleepErr)
 			}
 			continue
 		}
@@ -75,20 +153,37 @@ func TestConnection(
 		}
 
 		if err != nil {
-			lastErr = fmt.Errorf("failed to query database: %w", err)
-			log.Warnw("PostgreSQL connection attempt failed", "host", host, "port", port, "attempt", attempt, "error", lastErr)
-			if attempt < retries {
-				time.Sleep(retryTimeout)
+			log.Warnw("PostgreSQL connection attempt failed - query failed",
+				"host", host, "port", port, "attempt", attempt, "error", err)
+
+			nextBackoff := b.NextBackOff()
+			if nextBackoff == backoff.Stop {
+				return false, fmt.Errorf("failed to connect to PostgreSQL after %d attempts (max elapsed time %v): %w",
+					attempt, cfg.MaxElapsedTime, err)
+			}
+
+			log.Debugw("Will retry connection", "nextRetryIn", nextBackoff)
+			if sleepErr := ContextAwareSleep(ctx, nextBackoff); sleepErr != nil {
+				return false, fmt.Errorf("connection test cancelled during backoff: %w", sleepErr)
 			}
 			continue
 		}
 
 		// Verify we got the expected result
 		if result != 1 {
-			lastErr = fmt.Errorf("unexpected query result: %d", result)
-			log.Warnw("PostgreSQL connection attempt failed", "host", host, "port", port, "attempt", attempt, "error", lastErr)
-			if attempt < retries {
-				time.Sleep(retryTimeout)
+			err := fmt.Errorf("unexpected query result: %d", result)
+			log.Warnw("PostgreSQL connection attempt failed - unexpected result",
+				"host", host, "port", port, "attempt", attempt, "error", err)
+
+			nextBackoff := b.NextBackOff()
+			if nextBackoff == backoff.Stop {
+				return false, fmt.Errorf("failed to connect to PostgreSQL after %d attempts (max elapsed time %v): %w",
+					attempt, cfg.MaxElapsedTime, err)
+			}
+
+			log.Debugw("Will retry connection", "nextRetryIn", nextBackoff)
+			if sleepErr := ContextAwareSleep(ctx, nextBackoff); sleepErr != nil {
+				return false, fmt.Errorf("connection test cancelled during backoff: %w", sleepErr)
 			}
 			continue
 		}
@@ -97,14 +192,11 @@ func TestConnection(
 		log.Infow("PostgreSQL connection test successful", "host", host, "port", port, "attempt", attempt)
 		return true, nil
 	}
-
-	// All retries failed
-	return false, fmt.Errorf("failed to connect to PostgreSQL after %d attempts: %w", retries, lastErr)
 }
 
 // TestConnectionFromPostgresql tests the connection to a PostgreSQL instance from a Postgresql CRD
 func TestConnectionFromPostgresql(
-	ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient *vault.Client,
+	ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient vault.ClientInterface,
 	log *zap.SugaredLogger, retries int, retryTimeout time.Duration) error {
 	if postgresql.Spec.ExternalInstance == nil {
 		return fmt.Errorf("PostgreSQL instance has no external instance configuration")

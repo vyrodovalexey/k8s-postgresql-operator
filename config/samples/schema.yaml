@@ -6,17 +6,19 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: schema-sample
 spec:
-  # Database is the name of the PostgreSQL database to create
+  # Schema is the name of the PostgreSQL schema to create
   schema: "myschema"
 
-  owner: "myuser"
-  
-  # Owner is the PostgreSQL user that will own the database
+  # Owner is the PostgreSQL user that will own the schema
   # This user must exist in PostgreSQL (can be created via User CRD)
-  # Make sure to create the user first using the User CRD before creating the database
+  # Make sure to create the user first using the User CRD before creating the schema
+  owner: "myuser"
 
-  # PostgresqlID is the ID of the PostgreSQL instance where this database should be created
+  # PostgresqlID is the ID of the PostgreSQL instance where this schema should be created
   # This must match the postgresqlID in the Postgresql CRD
-  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FD"
-  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  postgresqlID: "test-pg-001"
+
+  # Database is the name of the PostgreSQL database where this schema should be created
+  # This database must exist in PostgreSQL (can be created via Database CRD)
+  database: "mydatabase"
 

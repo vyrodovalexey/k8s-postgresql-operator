@@ -26,6 +26,7 @@ import (
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 )
 
 // GrantValidator validates Grant resources
@@ -117,8 +118,27 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 		return admission.Denied(duplicateResult.Message)
 	}
 
+	// Validate privileges against allowlist for each grant item
+	for i, grantItem := range grant.Spec.Grants {
+		if err := postgresql.ValidatePrivileges(grantItem.Type, grantItem.Privileges); err != nil {
+			msg := fmt.Sprintf("Invalid privilege in grant item %d: %v", i, err)
+			v.Log.Infow("Validation denied", "reason", msg, "grantType", grantItem.Type, "privileges", grantItem.Privileges)
+			return admission.Denied(msg)
+		}
+	}
+
+	// Validate default privileges against allowlist
+	for i, defaultPriv := range grant.Spec.DefaultPrivileges {
+		if err := postgresql.ValidateDefaultPrivileges(defaultPriv.ObjectType, defaultPriv.Privileges); err != nil {
+			msg := fmt.Sprintf("Invalid privilege in default privilege item %d: %v", i, err)
+			v.Log.Infow("Validation denied",
+				"reason", msg, "objectType", defaultPriv.ObjectType, "privileges", defaultPriv.Privileges)
+			return admission.Denied(msg)
+		}
+	}
+
 	v.Log.Infow("Validation passed",
 		"name", grant.Name, "namespace", grant.Namespace, "postgresqlID", postgresqlID,
 		"role", role, "database", databaseName)
-	return admission.Allowed("No duplicate postgresqlID, role, and database combination found in cluster")
+	return admission.Allowed("Grant validation passed: no duplicates and all privileges are valid")
 }

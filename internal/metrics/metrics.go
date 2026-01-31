@@ -47,6 +47,43 @@ var (
 		},
 		[]string{"kind", "postgresql_id", "name", "namespace", "databasename", "username"},
 	)
+
+	// RateLimitWaitTotal is the total number of rate limit wait operations
+	RateLimitWaitTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_rate_limit_wait_total",
+			Help: "Total number of rate limit wait operations",
+		},
+		[]string{"service", "result"},
+	)
+
+	// RateLimitAllowTotal is the total number of rate limit allow checks
+	RateLimitAllowTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_rate_limit_allow_total",
+			Help: "Total number of rate limit allow checks",
+		},
+		[]string{"service", "result"},
+	)
+
+	// OperationDuration is a histogram for operation latencies
+	OperationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "postgresql_operator_operation_duration_seconds",
+			Help:    "Duration of operations in seconds",
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // 1ms to ~16s
+		},
+		[]string{"service", "operation", "result"},
+	)
+
+	// OperationTotal is the total number of operations
+	OperationTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_operation_total",
+			Help: "Total number of operations",
+		},
+		[]string{"service", "operation", "result"},
+	)
 )
 
 func init() {
@@ -54,6 +91,10 @@ func init() {
 	metrics.Registry.MustRegister(PostgresqlCount)
 	metrics.Registry.MustRegister(ObjectCountPerPostgresqlID)
 	metrics.Registry.MustRegister(ObjectNames)
+	metrics.Registry.MustRegister(RateLimitWaitTotal)
+	metrics.Registry.MustRegister(RateLimitAllowTotal)
+	metrics.Registry.MustRegister(OperationDuration)
+	metrics.Registry.MustRegister(OperationTotal)
 }
 
 // UpdatePostgresqlCount updates the total number of PostgreSQL instances
@@ -81,4 +122,24 @@ func RemoveObjectInfo(kind, postgresqlID, name, namespace, databasename, usernam
 // RemoveObjectCount removes the count metric for a specific kind and postgresqlID
 func RemoveObjectCount(kind, postgresqlID string) {
 	ObjectCountPerPostgresqlID.DeleteLabelValues(kind, postgresqlID)
+}
+
+// RecordRateLimitWait records a rate limit wait operation
+func RecordRateLimitWait(service, result string) {
+	RateLimitWaitTotal.WithLabelValues(service, result).Inc()
+}
+
+// RecordRateLimitAllow records a rate limit allow check
+func RecordRateLimitAllow(service, result string) {
+	RateLimitAllowTotal.WithLabelValues(service, result).Inc()
+}
+
+// RecordOperationDuration records the duration of an operation
+func RecordOperationDuration(service, operation, result string, durationSeconds float64) {
+	OperationDuration.WithLabelValues(service, operation, result).Observe(durationSeconds)
+}
+
+// RecordOperation records an operation with its result
+func RecordOperation(service, operation, result string) {
+	OperationTotal.WithLabelValues(service, operation, result).Inc()
 }

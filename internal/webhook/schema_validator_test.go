@@ -68,8 +68,8 @@ func TestSchemaValidator_Handle_NoPostgresqlID(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No postgresqlID specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "postgresqlID is required")
 }
 
 func TestSchemaValidator_Handle_NoSchemaName(t *testing.T) {
@@ -110,8 +110,8 @@ func TestSchemaValidator_Handle_NoSchemaName(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No schema name specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "schema name is required")
 }
 
 func TestSchemaValidator_Handle_NoOwner(t *testing.T) {
@@ -153,8 +153,52 @@ func TestSchemaValidator_Handle_NoOwner(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No owner specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "owner is required")
+}
+
+func TestSchemaValidator_Handle_NoDatabase(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	validator := &SchemaValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+	}
+
+	schema := &instancev1alpha1.Schema{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-schema",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.SchemaSpec{
+			PostgresqlID: "pg-1",
+			Schema:       "schema1",
+			Owner:        "owner1",
+			Database:     "",
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "database is required")
 }
 
 func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
@@ -177,6 +221,7 @@ func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
 
 	postgresqlID := "pg-1"
 	schemaName := "schema1"
+	database := "testdb"
 
 	schema := &instancev1alpha1.Schema{
 		ObjectMeta: metav1.ObjectMeta{
@@ -187,6 +232,7 @@ func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
 			PostgresqlID: postgresqlID,
 			Schema:       schemaName,
 			Owner:        "owner1",
+			Database:     database,
 		},
 	}
 
@@ -217,6 +263,7 @@ func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
 					PostgresqlID: postgresqlID,
 					Schema:       schemaName,
 					Owner:        "owner1",
+					Database:     database,
 				},
 			},
 		},
@@ -258,6 +305,7 @@ func TestSchemaValidator_Handle_NoDuplicate(t *testing.T) {
 
 	postgresqlID := "pg-1"
 	schemaName := "schema1"
+	database := "testdb"
 
 	schema := &instancev1alpha1.Schema{
 		ObjectMeta: metav1.ObjectMeta{
@@ -268,6 +316,7 @@ func TestSchemaValidator_Handle_NoDuplicate(t *testing.T) {
 			PostgresqlID: postgresqlID,
 			Schema:       schemaName,
 			Owner:        "owner1",
+			Database:     database,
 		},
 	}
 
@@ -298,6 +347,7 @@ func TestSchemaValidator_Handle_NoDuplicate(t *testing.T) {
 					PostgresqlID: postgresqlID,
 					Schema:       "different-schema", // Different schema name
 					Owner:        "owner1",
+					Database:     database,
 				},
 			},
 		},
@@ -344,6 +394,7 @@ func TestSchemaValidator_Handle_PostgresqlNotFound(t *testing.T) {
 			PostgresqlID: "pg-1",
 			Schema:       "schema1",
 			Owner:        "owner1",
+			Database:     "testdb",
 		},
 	}
 

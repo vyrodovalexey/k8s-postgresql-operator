@@ -19,9 +19,9 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/constants"
 	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
@@ -53,7 +53,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		r.Log.Error(err, "Failed to get Database")
+		r.Log.Errorw("Failed to get Database",
+			"name", req.Name, "namespace", req.Namespace, "error", err)
 		return ctrl.Result{}, err
 	}
 
@@ -67,7 +68,8 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if !controllerhelpers.ContainsString(database.Finalizers, databaseFinalizerName) {
 			database.Finalizers = append(database.Finalizers, databaseFinalizerName)
 			if err := r.Update(ctx, database); err != nil {
-				r.Log.Error(err, "Failed to add finalizer")
+				r.Log.Errorw("Failed to add finalizer",
+					"name", database.Name, "namespace", database.Namespace, "error", err)
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{Requeue: true}, nil
@@ -77,70 +79,83 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Find PostgreSQL instance by PostgresqlID
 	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, database.Spec.PostgresqlID)
 	if err != nil {
-		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", database.Spec.PostgresqlID)
-		controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
+		r.Log.Errorw("Failed to find PostgreSQL instance",
+			"name", database.Name, "namespace", database.Namespace,
+			"postgresqlID", database.Spec.PostgresqlID, "error", err)
+		controllerhelpers.UpdateDatabaseCondition(database, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonPostgresqlNotFound,
 			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", database.Spec.PostgresqlID, err))
 		if err := r.Status().Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to update Database status")
+			r.Log.Errorw("Failed to update Database status",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: constants.DefaultRequeueDelay}, nil
 	}
 
 	// Check if PostgreSQL instance is connected
 	if !postgresql.Status.Connected {
-		r.Log.Infow("PostgreSQL instance is not connected, waiting", "postgresqlID", database.Spec.PostgresqlID)
-		controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
+		r.Log.Infow("PostgreSQL instance is not connected, waiting",
+			"name", database.Name, "namespace", database.Namespace, "postgresqlID", database.Spec.PostgresqlID)
+		controllerhelpers.UpdateDatabaseCondition(database, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonPostgresqlNotConnected,
 			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", database.Spec.PostgresqlID))
 		if err := r.Status().Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to update Database status")
+			r.Log.Errorw("Failed to update Database status",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: constants.DefaultRequeueDelay}, nil
 	}
 
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration ",
-			"postgresqlID: ", database.Spec.PostgresqlID)
-		controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
+		r.Log.Errorw("PostgreSQL instance has no external instance configuration",
+			"name", database.Name, "namespace", database.Namespace, "postgresqlID", database.Spec.PostgresqlID)
+		controllerhelpers.UpdateDatabaseCondition(database, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonInvalidConfiguration,
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to update Database status")
+			r.Log.Errorw("Failed to update Database status",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 		}
 		return ctrl.Result{}, nil
 	}
 
-	port := externalInstance.Port
-	if port == 0 {
-		port = 5432
-	}
-
-	sslMode := externalInstance.SSLMode
-	if sslMode == "" {
-		sslMode = pg.DefaultSSLMode
-	}
+	// Get connection defaults
+	port, sslMode := controllerhelpers.GetConnectionDefaults(externalInstance.Port, externalInstance.SSLMode)
 
 	var postgresUsername, postgresPassword string
 	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetryAndRateLimit(
 			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay, r.VaultRateLimiter)
 		if err != nil {
-			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Errorw("Failed to get credentials from Vault",
+				"name", database.Name, "namespace", database.Namespace,
+				"postgresqlID", externalInstance.PostgresqlID, "error", err)
 		} else {
 			postgresUsername = vaultUsername
 			postgresPassword = vaultPassword
-			r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
+			r.Log.Debugw("Credentials retrieved from Vault",
+				"name", database.Name, "namespace", database.Namespace, "postgresqlID", externalInstance.PostgresqlID)
 		}
 	} else {
 		// Use password from spec if Vault is not available
-		r.Log.Infow("Vault client not available")
+		r.Log.Infow("Vault client not available",
+			"name", database.Name, "namespace", database.Namespace)
 	}
 
-	// Determine schema name - default to "public" if not specified
+	// Determine schema name - default to DefaultSchemaName if not specified
 	schemaName := database.Spec.Schema
 	if schemaName == "" {
-		schemaName = "public"
+		schemaName = constants.DefaultSchemaName
+	}
+
+	// Apply rate limiting before PostgreSQL operation
+	if r.PostgresqlRateLimiter != nil {
+		if err := r.PostgresqlRateLimiter.Wait(ctx); err != nil {
+			return ctrl.Result{}, fmt.Errorf("rate limit wait failed: %w", err)
+		}
 	}
 
 	// Create or update database in PostgreSQL with retry logic
@@ -149,15 +164,22 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			database.Spec.Database, database.Spec.Owner, schemaName, database.Spec.DBTemplate)
 	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "createOrUpdateDatabase")
 	if err != nil {
-		r.Log.Error(err, "Failed to create/update database in PostgreSQL", "database", database.Spec.Database)
+		r.Log.Errorw("Failed to create/update database in PostgreSQL",
+			"name", database.Name, "namespace", database.Namespace,
+			"database", database.Spec.Database, "operation", "createOrUpdateDatabase", "error", err)
 		database.Status.Created = false
-		controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "CreateFailed",
+		controllerhelpers.UpdateDatabaseCondition(database, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonCreateFailed,
 			fmt.Sprintf("Failed to create database: %v", err))
+		r.EventRecorder.RecordCreateFailed(database, "Database", database.Spec.Database, err.Error())
 	} else {
 		database.Status.Created = true
-		controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionTrue, "Created",
+		controllerhelpers.UpdateDatabaseCondition(database, constants.ConditionTypeReady,
+			metav1.ConditionTrue, constants.ConditionReasonCreated,
 			fmt.Sprintf("Database %s successfully created in PostgreSQL", database.Spec.Database))
+		r.EventRecorder.RecordCreated(database, "Database", database.Spec.Database)
 		r.Log.Infow("Database successfully created in PostgreSQL",
+			"name", database.Name, "namespace", database.Namespace,
 			"PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database, "schema", schemaName)
 	}
 
@@ -166,11 +188,13 @@ func (r *DatabaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Update the status
 	if err := r.Status().Update(ctx, database); err != nil {
-		r.Log.Error(err, "Failed to update Database status")
+		r.Log.Errorw("Failed to update Database status",
+			"name", database.Name, "namespace", database.Namespace, "error", err)
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Infow("Successfully reconciled Database", "database", database.Spec.Database)
+	r.Log.Infow("Successfully reconciled Database",
+		"name", database.Name, "namespace", database.Namespace, "database", database.Spec.Database)
 	return ctrl.Result{}, nil
 }
 
@@ -183,7 +207,8 @@ func (r *DatabaseReconciler) handleDeletion(
 		if controllerhelpers.ContainsString(database.Finalizers, databaseFinalizerName) {
 			database.Finalizers = controllerhelpers.RemoveString(database.Finalizers, databaseFinalizerName)
 			if err := r.Update(ctx, database); err != nil {
-				r.Log.Error(err, "Failed to remove finalizer")
+				r.Log.Errorw("Failed to remove finalizer",
+					"name", database.Name, "namespace", database.Namespace, "error", err)
 				return ctrl.Result{}, err
 			}
 		}
@@ -200,11 +225,13 @@ func (r *DatabaseReconciler) handleDeletion(
 	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, database.Spec.PostgresqlID)
 	if err != nil {
 		r.Log.Warnw("Failed to find PostgreSQL instance during deletion, proceeding with finalizer removal",
+			"name", database.Name, "namespace", database.Namespace,
 			"postgresqlID", database.Spec.PostgresqlID, "error", err)
 		// Remove finalizer even if PostgreSQL not found
 		database.Finalizers = controllerhelpers.RemoveString(database.Finalizers, databaseFinalizerName)
 		if err := r.Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to remove finalizer")
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -213,11 +240,12 @@ func (r *DatabaseReconciler) handleDeletion(
 	// Check if PostgreSQL instance is connected
 	if !postgresql.Status.Connected {
 		r.Log.Warnw("PostgreSQL instance is not connected during deletion, proceeding with finalizer removal",
-			"postgresqlID", database.Spec.PostgresqlID)
+			"name", database.Name, "namespace", database.Namespace, "postgresqlID", database.Spec.PostgresqlID)
 		// Remove finalizer even if PostgreSQL not connected
 		database.Finalizers = controllerhelpers.RemoveString(database.Finalizers, databaseFinalizerName)
 		if err := r.Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to remove finalizer")
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -228,48 +256,46 @@ func (r *DatabaseReconciler) handleDeletion(
 	if externalInstance == nil {
 		r.Log.Warnw(
 			"PostgreSQL instance has no external instance configuration during deletion, proceeding with finalizer removal",
-			"postgresqlID", database.Spec.PostgresqlID)
+			"name", database.Name, "namespace", database.Namespace, "postgresqlID", database.Spec.PostgresqlID)
 		// Remove finalizer
 		database.Finalizers = controllerhelpers.RemoveString(database.Finalizers, databaseFinalizerName)
 		if err := r.Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to remove finalizer")
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 
-	port := externalInstance.Port
-	if port == 0 {
-		port = 5432
-	}
-
-	sslMode := externalInstance.SSLMode
-	if sslMode == "" {
-		sslMode = pg.DefaultSSLMode
-	}
+	// Get connection defaults
+	port, sslMode := controllerhelpers.GetConnectionDefaults(externalInstance.Port, externalInstance.SSLMode)
 
 	var postgresUsername, postgresPassword string
 	if r.VaultClient == nil {
-		r.Log.Warnw("Vault client not available during deletion, cannot delete database from PostgreSQL")
+		r.Log.Warnw("Vault client not available during deletion, cannot delete database from PostgreSQL",
+			"name", database.Name, "namespace", database.Namespace)
 		// Remove finalizer even if Vault not available
 		database.Finalizers = controllerhelpers.RemoveString(database.Finalizers, databaseFinalizerName)
 		if err := r.Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to remove finalizer")
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 
-	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetryAndRateLimit(
 		ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay, r.VaultRateLimiter)
 	if err != nil {
-		r.Log.Error(err, "Failed to get credentials from Vault during deletion",
-			"postgresqlID", externalInstance.PostgresqlID)
+		r.Log.Errorw("Failed to get credentials from Vault during deletion",
+			"name", database.Name, "namespace", database.Namespace,
+			"postgresqlID", externalInstance.PostgresqlID, "error", err)
 		// Remove finalizer even if credentials not available
 		database.Finalizers = controllerhelpers.RemoveString(database.Finalizers, databaseFinalizerName)
 		if err := r.Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to remove finalizer")
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -277,29 +303,44 @@ func (r *DatabaseReconciler) handleDeletion(
 	postgresUsername = vaultUsername
 	postgresPassword = vaultPassword
 
+	// Apply rate limiting before PostgreSQL operation
+	if r.PostgresqlRateLimiter != nil {
+		if err := r.PostgresqlRateLimiter.Wait(ctx); err != nil {
+			return ctrl.Result{}, fmt.Errorf("rate limit wait failed: %w", err)
+		}
+	}
+
 	// Delete database from PostgreSQL with retry logic
 	err = pg.ExecuteOperationWithRetry(ctx, func() error {
 		return pg.DeleteDatabase(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
 			database.Spec.Database)
 	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "deleteDatabase")
 	if err != nil {
-		r.Log.Error(err, "Failed to delete database from PostgreSQL", "database", database.Spec.Database)
-		controllerhelpers.UpdateDatabaseCondition(database, "Ready", metav1.ConditionFalse, "DeleteFailed",
+		r.Log.Errorw("Failed to delete database from PostgreSQL",
+			"name", database.Name, "namespace", database.Namespace,
+			"database", database.Spec.Database, "operation", "deleteDatabase", "error", err)
+		controllerhelpers.UpdateDatabaseCondition(database, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonDeleteFailed,
 			fmt.Sprintf("Failed to delete database: %v", err))
+		r.EventRecorder.RecordDeleteFailed(database, "Database", database.Spec.Database, err.Error())
 		if err := r.Status().Update(ctx, database); err != nil {
-			r.Log.Error(err, "Failed to update Database status")
+			r.Log.Errorw("Failed to update Database status",
+				"name", database.Name, "namespace", database.Namespace, "error", err)
 		}
 		// Requeue to retry deletion
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: constants.DefaultRequeueDelay}, nil
 	}
 
+	r.EventRecorder.RecordDeleted(database, "Database", database.Spec.Database)
 	r.Log.Infow("Database successfully deleted from PostgreSQL",
+		"name", database.Name, "namespace", database.Namespace,
 		"PostgresqlID", database.Spec.PostgresqlID, "database", database.Spec.Database)
 
 	// Remove finalizer
 	database.Finalizers = controllerhelpers.RemoveString(database.Finalizers, databaseFinalizerName)
 	if err := r.Update(ctx, database); err != nil {
-		r.Log.Error(err, "Failed to remove finalizer")
+		r.Log.Errorw("Failed to remove finalizer",
+			"name", database.Name, "namespace", database.Namespace, "error", err)
 		return ctrl.Result{}, err
 	}
 

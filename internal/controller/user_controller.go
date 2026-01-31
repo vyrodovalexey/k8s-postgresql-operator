@@ -21,17 +21,19 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
-	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/constants"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
+)
+
+const (
+	userFinalizerName = "user.postgresql-operator.vyrodovalexey.github.com/finalizer"
 )
 
 // UserReconciler reconciles a User object
@@ -39,7 +41,7 @@ type UserReconciler struct {
 	BaseReconcilerConfig
 }
 
-// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=users/finalizers,verbs=update
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
@@ -52,81 +54,114 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		r.Log.Error(err, "Failed to get User")
+		r.Log.Errorw("Failed to get User",
+			"name", req.Name, "namespace", req.Namespace, "error", err)
 		return ctrl.Result{}, err
+	}
+
+	// Handle deletion
+	if user.DeletionTimestamp != nil {
+		return r.handleDeletion(ctx, user)
+	}
+
+	// Add finalizer if DeleteFromCRD is true
+	if user.Spec.DeleteFromCRD {
+		if !controllerhelpers.ContainsString(user.Finalizers, userFinalizerName) {
+			user.Finalizers = append(user.Finalizers, userFinalizerName)
+			if err := r.Update(ctx, user); err != nil {
+				r.Log.Errorw("Failed to add finalizer",
+					"name", user.Name, "namespace", user.Namespace, "error", err)
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
 	}
 
 	// Find PostgreSQL instance by PostgresqlID
 	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, user.Spec.PostgresqlID)
 	if err != nil {
-		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", user.Spec.PostgresqlID)
-		updateUserCondition(user, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
+		r.Log.Errorw("Failed to find PostgreSQL instance",
+			"name", user.Name, "namespace", user.Namespace,
+			"postgresqlID", user.Spec.PostgresqlID, "error", err)
+		controllerhelpers.UpdateUserCondition(user, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonPostgresqlNotFound,
 			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", user.Spec.PostgresqlID, err))
 		if err := r.Status().Update(ctx, user); err != nil {
-			r.Log.Error(err, "Failed to update User status")
+			r.Log.Errorw("Failed to update User status",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: constants.DefaultRequeueDelay}, nil
 	}
 
 	// Check if PostgreSQL instance is connected
 	if !postgresql.Status.Connected {
-		r.Log.Info("PostgreSQL instance is not connected, waiting", "postgresqlID", user.Spec.PostgresqlID)
-		updateUserCondition(user, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
+		r.Log.Infow("PostgreSQL instance is not connected, waiting",
+			"name", user.Name, "namespace", user.Namespace, "postgresqlID", user.Spec.PostgresqlID)
+		controllerhelpers.UpdateUserCondition(user, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonPostgresqlNotConnected,
 			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", user.Spec.PostgresqlID))
 		if err := r.Status().Update(ctx, user); err != nil {
-			r.Log.Error(err, "Failed to update User status")
+			r.Log.Errorw("Failed to update User status",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: constants.DefaultRequeueDelay}, nil
 	}
 
 	// Get PostgreSQL connection details
 	externalInstance := postgresql.Spec.ExternalInstance
 	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration", "postgresqlID", user.Spec.PostgresqlID)
-		updateUserCondition(user, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
+		r.Log.Errorw("PostgreSQL instance has no external instance configuration",
+			"name", user.Name, "namespace", user.Namespace, "postgresqlID", user.Spec.PostgresqlID)
+		controllerhelpers.UpdateUserCondition(user, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonInvalidConfiguration,
 			"PostgreSQL instance has no external instance configuration")
 		if err := r.Status().Update(ctx, user); err != nil {
-			r.Log.Error(err, "Failed to update User status")
+			r.Log.Errorw("Failed to update User status",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
 		}
 		return ctrl.Result{}, nil
 	}
 
-	port := externalInstance.Port
-	if port == 0 {
-		port = 5432
-	}
-
-	sslMode := externalInstance.SSLMode
-	if sslMode == "" {
-		sslMode = pg.DefaultSSLMode
-	}
+	// Get connection defaults
+	port, sslMode := controllerhelpers.GetConnectionDefaults(externalInstance.Port, externalInstance.SSLMode)
 
 	var postgresUsername, postgresPassword, dbPassword string
 
 	// Get admin credentials from Vault if available
 	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
+		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetryAndRateLimit(
 			ctx, r.VaultClient, user.Spec.PostgresqlID, r.Log,
-			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay, r.VaultRateLimiter)
 		if err != nil {
-			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", user.Spec.PostgresqlID)
+			r.Log.Errorw("Failed to get credentials from Vault",
+				"name", user.Name, "namespace", user.Namespace,
+				"postgresqlID", user.Spec.PostgresqlID, "error", err)
 		} else {
 			postgresUsername = vaultUsername
 			postgresPassword = vaultPassword
-			r.Log.Info("Credentials retrieved from Vault by user controller, ", "postgresqlID: ", user.Spec.PostgresqlID)
+			r.Log.Debugw("Credentials retrieved from Vault by user controller",
+				"name", user.Name, "namespace", user.Namespace, "postgresqlID", user.Spec.PostgresqlID)
 		}
 	} else {
-		r.Log.Info("Vault client not available")
+		r.Log.Infow("Vault client not available",
+			"name", user.Name, "namespace", user.Namespace)
 	}
 
 	// Get user password from Vault or generate/store it
 	if r.VaultClient == nil {
 		// Use password from spec if Vault is not available
-		r.Log.Info("Vault client not available")
+		r.Log.Infow("Vault client not available")
 	} else {
 		dbPassword = r.handleVaultUserPassword(ctx, user)
 		if dbPassword == "" {
 			return ctrl.Result{}, fmt.Errorf("failed to handle user password from Vault")
+		}
+	}
+
+	// Apply rate limiting before PostgreSQL operation
+	if r.PostgresqlRateLimiter != nil {
+		if err := r.PostgresqlRateLimiter.Wait(ctx); err != nil {
+			return ctrl.Result{}, fmt.Errorf("rate limit wait failed: %w", err)
 		}
 	}
 
@@ -136,14 +171,20 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			user.Spec.Username, dbPassword)
 	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "createOrUpdateUser")
 	if err != nil {
-		r.Log.Error(err, "Failed to create/update user in PostgreSQL, ", "username: ", user.Spec.Username)
+		r.Log.Errorw("Failed to create/update user in PostgreSQL",
+			"name", user.Name, "namespace", user.Namespace,
+			"operation", "createOrUpdateUser", "error", err)
 		user.Status.Created = false
-		updateUserCondition(user, "Ready", metav1.ConditionFalse, "CreateFailed",
+		controllerhelpers.UpdateUserCondition(user, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonCreateFailed,
 			fmt.Sprintf("Failed to create user: %v", err))
+		r.EventRecorder.RecordCreateFailed(user, "User", user.Spec.Username, err.Error())
 	} else {
 		user.Status.Created = true
-		updateUserCondition(user, "Ready", metav1.ConditionTrue, "Created",
+		controllerhelpers.UpdateUserCondition(user, constants.ConditionTypeReady,
+			metav1.ConditionTrue, constants.ConditionReasonCreated,
 			fmt.Sprintf("User %s successfully created in PostgreSQL", user.Spec.Username))
+		r.EventRecorder.RecordCreated(user, "User", user.Spec.Username)
 	}
 
 	now := metav1.Now()
@@ -151,11 +192,13 @@ func (r *UserReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Update the status
 	if err := r.Status().Update(ctx, user); err != nil {
-		r.Log.Error(err, "Failed to update User status")
+		r.Log.Errorw("Failed to update User status",
+			"name", user.Name, "namespace", user.Namespace, "error", err)
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Info("Successfully reconciled User with ", "username: ", user.Spec.Username)
+	r.Log.Infow("Successfully reconciled User",
+		"name", user.Name, "namespace", user.Namespace)
 	return ctrl.Result{}, nil
 }
 
@@ -182,54 +225,20 @@ func generateRandomPassword(length int) (string, error) {
 	return string(password), nil
 }
 
-// updateUserCondition updates or adds a condition to the User status using meta.SetStatusCondition
-// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
-func updateUserCondition(
-	user *instancev1alpha1.User, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: user.Generation,
-	}
-	meta.SetStatusCondition(&user.Status.Conditions, condition)
-}
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	ignoreStatusUpdates := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldObj := e.ObjectOld.(*instancev1alpha1.User)
-			newObj := e.ObjectNew.(*instancev1alpha1.User)
-
-			if oldObj.Generation != newObj.Generation {
-				return true
-			}
-
-			if oldObj.DeletionTimestamp != newObj.DeletionTimestamp {
-				return true
-			}
-
-			return false
-		},
-		CreateFunc:  func(e event.CreateEvent) bool { return true },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
-		GenericFunc: func(e event.GenericEvent) bool { return true },
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&instancev1alpha1.User{}).
 		Named("user").
-		WithEventFilter(ignoreStatusUpdates).
+		WithEventFilter(controllerhelpers.IgnoreStatusUpdatesPredicate()).
 		Complete(r)
 }
 
 // handleVaultUserPassword handles password retrieval/generation from Vault
 func (r *UserReconciler) handleVaultUserPassword(ctx context.Context, user *instancev1alpha1.User) string {
-	vaultUserPassword, err := getVaultUserCredentialsWithRetry(
+	vaultUserPassword, err := getVaultUserCredentialsWithRetryAndRateLimit(
 		ctx, r.VaultClient, user.Spec.PostgresqlID, user.Spec.Username, r.Log,
-		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay, r.VaultRateLimiter)
 	credentialsExist := err == nil && vaultUserPassword != ""
 
 	// Generate new password if:
@@ -239,45 +248,193 @@ func (r *UserReconciler) handleVaultUserPassword(ctx context.Context, user *inst
 
 	if !shouldGeneratePassword {
 		// Use existing password from Vault
-		r.Log.Info("User credentials retrieved from Vault",
-			"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+		r.Log.Debugw("User credentials retrieved from Vault",
+			"postgresqlID", user.Spec.PostgresqlID)
 		return vaultUserPassword
 	}
 
 	// Generate new password
 	if !credentialsExist {
-		r.Log.Info("User credentials not found in Vault, generating new password",
-			"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username, "error", err)
+		r.Log.Debugw("User credentials not found in Vault, generating new password",
+			"postgresqlID", user.Spec.PostgresqlID, "error", err)
 	} else if user.Spec.UpdatePassword {
-		r.Log.Info("updatePassword is true, regenerating password",
-			"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+		r.Log.Debugw("updatePassword is true, regenerating password",
+			"postgresqlID", user.Spec.PostgresqlID)
 	}
 
 	// Generate random password
-	generatedPassword, err := generateRandomPassword(32)
+	generatedPassword, err := generateRandomPassword(constants.DefaultPasswordLength)
 	if err != nil {
-		r.Log.Error(err, "Failed to generate random password",
-			"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+		r.Log.Errorw("Failed to generate random password",
+			"postgresqlID", user.Spec.PostgresqlID, "error", err)
 		return ""
 	}
-	r.Log.Info("Generated random password for user", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+	r.Log.Debugw("Generated random password for user", "postgresqlID", user.Spec.PostgresqlID)
 
 	// Store/update password in Vault
-	err = storeVaultUserCredentialsWithRetry(
+	err = storeVaultUserCredentialsWithRetryAndRateLimit(
 		ctx, r.VaultClient, user.Spec.PostgresqlID, user.Spec.Username, generatedPassword, r.Log,
-		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
+		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay, r.VaultRateLimiter)
 	if err != nil {
-		r.Log.Error(err, "Failed to store user credentials in Vault",
-			"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+		r.Log.Errorw("Failed to store user credentials in Vault",
+			"postgresqlID", user.Spec.PostgresqlID, "error", err)
 		// Continue with reconciliation even if Vault storage fails
 		return generatedPassword
 	}
 
 	if credentialsExist {
-		r.Log.Info("User credentials updated in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+		r.Log.Debugw("User credentials updated in Vault", "postgresqlID", user.Spec.PostgresqlID)
 	} else {
-		r.Log.Info("User credentials stored in Vault", "postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+		r.Log.Debugw("User credentials stored in Vault", "postgresqlID", user.Spec.PostgresqlID)
 	}
 
 	return generatedPassword
+}
+
+// handleDeletion handles the deletion of a User resource
+func (r *UserReconciler) handleDeletion(ctx context.Context, user *instancev1alpha1.User) (ctrl.Result, error) {
+	// Only delete from PostgreSQL if DeleteFromCRD is true
+	if !user.Spec.DeleteFromCRD {
+		// Remove finalizer if it exists
+		if controllerhelpers.ContainsString(user.Finalizers, userFinalizerName) {
+			user.Finalizers = controllerhelpers.RemoveString(user.Finalizers, userFinalizerName)
+			if err := r.Update(ctx, user); err != nil {
+				r.Log.Errorw("Failed to remove finalizer",
+					"name", user.Name, "namespace", user.Namespace, "error", err)
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Check if finalizer is present
+	if !controllerhelpers.ContainsString(user.Finalizers, userFinalizerName) {
+		// Finalizer already removed, nothing to do
+		return ctrl.Result{}, nil
+	}
+
+	// Find PostgreSQL instance by PostgresqlID
+	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, user.Spec.PostgresqlID)
+	if err != nil {
+		r.Log.Warnw("Failed to find PostgreSQL instance during deletion, proceeding with finalizer removal",
+			"name", user.Name, "namespace", user.Namespace,
+			"postgresqlID", user.Spec.PostgresqlID, "error", err)
+		// Remove finalizer even if PostgreSQL not found
+		user.Finalizers = controllerhelpers.RemoveString(user.Finalizers, userFinalizerName)
+		if err := r.Update(ctx, user); err != nil {
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Check if PostgreSQL instance is connected
+	if !postgresql.Status.Connected {
+		r.Log.Warnw("PostgreSQL instance is not connected during deletion, proceeding with finalizer removal",
+			"name", user.Name, "namespace", user.Namespace, "postgresqlID", user.Spec.PostgresqlID)
+		// Remove finalizer even if PostgreSQL not connected
+		user.Finalizers = controllerhelpers.RemoveString(user.Finalizers, userFinalizerName)
+		if err := r.Update(ctx, user); err != nil {
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Get PostgreSQL connection details
+	externalInstance := postgresql.Spec.ExternalInstance
+	if externalInstance == nil {
+		r.Log.Warnw(
+			"PostgreSQL instance has no external instance configuration during deletion, proceeding with finalizer removal",
+			"name", user.Name, "namespace", user.Namespace, "postgresqlID", user.Spec.PostgresqlID)
+		// Remove finalizer
+		user.Finalizers = controllerhelpers.RemoveString(user.Finalizers, userFinalizerName)
+		if err := r.Update(ctx, user); err != nil {
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Get connection defaults
+	port, sslMode := controllerhelpers.GetConnectionDefaults(externalInstance.Port, externalInstance.SSLMode)
+
+	var postgresUsername, postgresPassword string
+	if r.VaultClient == nil {
+		r.Log.Warnw("Vault client not available during deletion, cannot delete user from PostgreSQL",
+			"name", user.Name, "namespace", user.Namespace)
+		// Remove finalizer even if Vault not available
+		user.Finalizers = controllerhelpers.RemoveString(user.Finalizers, userFinalizerName)
+		if err := r.Update(ctx, user); err != nil {
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetryAndRateLimit(
+		ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
+		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay, r.VaultRateLimiter)
+	if err != nil {
+		r.Log.Errorw("Failed to get credentials from Vault during deletion",
+			"name", user.Name, "namespace", user.Namespace,
+			"postgresqlID", externalInstance.PostgresqlID, "error", err)
+		// Remove finalizer even if credentials not available
+		user.Finalizers = controllerhelpers.RemoveString(user.Finalizers, userFinalizerName)
+		if err := r.Update(ctx, user); err != nil {
+			r.Log.Errorw("Failed to remove finalizer",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+	postgresUsername = vaultUsername
+	postgresPassword = vaultPassword
+
+	// Apply rate limiting before PostgreSQL operation
+	if r.PostgresqlRateLimiter != nil {
+		if err := r.PostgresqlRateLimiter.Wait(ctx); err != nil {
+			return ctrl.Result{}, fmt.Errorf("rate limit wait failed: %w", err)
+		}
+	}
+
+	// Delete user from PostgreSQL with retry logic
+	err = pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.DeleteUser(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
+			user.Spec.Username)
+	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "deleteUser")
+	if err != nil {
+		r.Log.Errorw("Failed to delete user from PostgreSQL",
+			"name", user.Name, "namespace", user.Namespace,
+			"operation", "deleteUser", "error", err)
+		controllerhelpers.UpdateUserCondition(user, constants.ConditionTypeReady,
+			metav1.ConditionFalse, constants.ConditionReasonDeleteFailed,
+			fmt.Sprintf("Failed to delete user: %v", err))
+		r.EventRecorder.RecordDeleteFailed(user, "User", user.Spec.Username, err.Error())
+		if err := r.Status().Update(ctx, user); err != nil {
+			r.Log.Errorw("Failed to update User status",
+				"name", user.Name, "namespace", user.Namespace, "error", err)
+		}
+		// Requeue to retry deletion
+		return ctrl.Result{RequeueAfter: constants.DefaultRequeueDelay}, nil
+	}
+
+	r.EventRecorder.RecordDeleted(user, "User", user.Spec.Username)
+	r.Log.Infow("User successfully deleted from PostgreSQL",
+		"name", user.Name, "namespace", user.Namespace,
+		"PostgresqlID", user.Spec.PostgresqlID)
+
+	// Remove finalizer
+	user.Finalizers = controllerhelpers.RemoveString(user.Finalizers, userFinalizerName)
+	if err := r.Update(ctx, user); err != nil {
+		r.Log.Errorw("Failed to remove finalizer",
+			"name", user.Name, "namespace", user.Namespace, "error", err)
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
 }

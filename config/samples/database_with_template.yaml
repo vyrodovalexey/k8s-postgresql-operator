@@ -4,7 +4,7 @@ metadata:
   name: database-from-template
   namespace: default
 spec:
-  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  postgresqlID: "test-pg-001"
   database: "myapp_production"
   owner: "myuser"
   schema: "public"

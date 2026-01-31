@@ -1,3 +1,53 @@
 # More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
-# Ignore build and test binaries.
+
+# Build and test binaries
 bin/
+dist/
+
+# Test files and coverage
+coverage/
+*.out
+*.test
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Helm charts (not needed in container)
+charts/
+
+# Configuration files
+.golangci.yml
+.editorconfig
+sonar-project.properties
+
+# Test infrastructure
+test/
+hack/
+
+# Claude output
+.Claude/
+
+# Kubernetes config
+config/
+
+# Temporary files
+*.tmp
+*.log

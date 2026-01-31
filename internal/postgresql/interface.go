@@ -69,7 +69,7 @@ type Client interface {
 
 	// TestConnectionFromPostgresql tests the connection to a PostgreSQL instance from a Postgresql CRD
 	TestConnectionFromPostgresql(
-		ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient *vault.Client,
+		ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient vault.ClientInterface,
 		log *zap.SugaredLogger, retries int, retryTimeout time.Duration) error
 
 	// ExecuteOperationWithRetry executes a PostgreSQL operation with retry logic
@@ -146,7 +146,7 @@ func (c *DefaultClient) TestConnection(
 
 // TestConnectionFromPostgresql implements Client.TestConnectionFromPostgresql
 func (c *DefaultClient) TestConnectionFromPostgresql(
-	ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient *vault.Client,
+	ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient vault.ClientInterface,
 	log *zap.SugaredLogger, retries int, retryTimeout time.Duration) error {
 	return TestConnectionFromPostgresql(ctx, postgresql, vaultClient, log, retries, retryTimeout)
 }

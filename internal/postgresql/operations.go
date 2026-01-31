@@ -28,13 +28,110 @@ import (
 	operrors "github.com/vyrodovalexey/k8s-postgresql-operator/internal/errors"
 )
 
+// ValidPrivileges defines the allowlist of valid privileges per grant type
+var ValidPrivileges = map[instancev1alpha1.GrantType][]string{
+	instancev1alpha1.GrantTypeDatabase: {
+		"CREATE", "CONNECT", "TEMPORARY", "TEMP", "ALL", "ALL PRIVILEGES",
+	},
+	instancev1alpha1.GrantTypeSchema: {
+		"CREATE", "USAGE", "ALL", "ALL PRIVILEGES",
+	},
+	instancev1alpha1.GrantTypeTable: {
+		"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "ALL", "ALL PRIVILEGES",
+	},
+	instancev1alpha1.GrantTypeSequence: {
+		"USAGE", "SELECT", "UPDATE", "ALL", "ALL PRIVILEGES",
+	},
+	instancev1alpha1.GrantTypeFunction: {
+		"EXECUTE", "ALL", "ALL PRIVILEGES",
+	},
+	instancev1alpha1.GrantTypeAllTables: {
+		"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "ALL", "ALL PRIVILEGES",
+	},
+	instancev1alpha1.GrantTypeAllSequences: {
+		"USAGE", "SELECT", "UPDATE", "ALL", "ALL PRIVILEGES",
+	},
+}
+
+// ValidDefaultPrivilegeObjectTypes defines valid object types for default privileges
+var ValidDefaultPrivilegeObjectTypes = map[string][]string{
+	"tables": {
+		"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "ALL", "ALL PRIVILEGES",
+	},
+	"sequences": {
+		"USAGE", "SELECT", "UPDATE", "ALL", "ALL PRIVILEGES",
+	},
+	"functions": {
+		"EXECUTE", "ALL", "ALL PRIVILEGES",
+	},
+	"types": {
+		"USAGE", "ALL", "ALL PRIVILEGES",
+	},
+}
+
+// ValidatePrivilege checks if a privilege is valid for the given grant type
+func ValidatePrivilege(grantType instancev1alpha1.GrantType, privilege string) error {
+	validPrivileges, ok := ValidPrivileges[grantType]
+	if !ok {
+		return fmt.Errorf("unknown grant type: %s", grantType)
+	}
+
+	upperPrivilege := strings.ToUpper(strings.TrimSpace(privilege))
+	for _, valid := range validPrivileges {
+		if upperPrivilege == valid {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("invalid privilege '%s' for grant type '%s'. Valid privileges are: %s",
+		privilege, grantType, strings.Join(validPrivileges, ", "))
+}
+
+// ValidatePrivileges checks if all privileges are valid for the given grant type
+func ValidatePrivileges(grantType instancev1alpha1.GrantType, privileges []string) error {
+	for _, privilege := range privileges {
+		if err := ValidatePrivilege(grantType, privilege); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidateDefaultPrivilege checks if a privilege is valid for the given default privilege object type
+func ValidateDefaultPrivilege(objectType string, privilege string) error {
+	validPrivileges, ok := ValidDefaultPrivilegeObjectTypes[strings.ToLower(objectType)]
+	if !ok {
+		return fmt.Errorf("unknown default privilege object type: %s", objectType)
+	}
+
+	upperPrivilege := strings.ToUpper(strings.TrimSpace(privilege))
+	for _, valid := range validPrivileges {
+		if upperPrivilege == valid {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("invalid privilege '%s' for default privilege object type '%s'. Valid privileges are: %s",
+		privilege, objectType, strings.Join(validPrivileges, ", "))
+}
+
+// ValidateDefaultPrivileges checks if all privileges are valid for the given default privilege object type
+func ValidateDefaultPrivileges(objectType string, privileges []string) error {
+	for _, privilege := range privileges {
+		if err := ValidateDefaultPrivilege(objectType, privilege); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CreateOrUpdateDatabase creates or updates a PostgreSQL database
 func CreateOrUpdateDatabase(
 	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode,
 	databaseName, owner, schemaName, templateDatabase string) error {
 	// Connect to PostgreSQL as admin user
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, sslMode)
+	connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, DefaultDB, sslMode)
+	connStr := connCfg.BuildConnectionString()
 
 	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -89,8 +186,8 @@ func CreateOrUpdateDatabase(
 	}
 
 	// Connect to the newly created database
-	connStr = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, databaseName, sslMode)
+	connCfg = NewConnectionConfig(host, port, adminUser, adminPassword, databaseName, sslMode)
+	connStr = connCfg.BuildConnectionString()
 
 	dbSchema, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -129,8 +226,8 @@ func CreateOrUpdateDatabase(
 func CreateOrUpdateUser(
 	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, username, password string) error {
 	// Connect to PostgreSQL as admin user
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, sslMode)
+	connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, DefaultDB, sslMode)
+	connStr := connCfg.BuildConnectionString()
 
 	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -145,8 +242,9 @@ func CreateOrUpdateUser(
 	// Replace double quotes with two double quotes to escape them
 	escapedUsername := pq.QuoteIdentifier(username)
 
-	// Escape password for SQL string literal (replace single quotes with two single quotes)
-	escapedPassword := pq.QuoteIdentifier(password)
+	// Escape password for SQL string literal using QuoteLiteral
+	// QuoteLiteral properly escapes special characters and includes surrounding quotes
+	escapedPassword := pq.QuoteLiteral(password)
 
 	// Check if user exists
 	var exists bool
@@ -157,18 +255,61 @@ func CreateOrUpdateUser(
 
 	if exists {
 		// Update user password - PostgreSQL doesn't support parameters in ALTER USER
-		query := fmt.Sprintf("ALTER USER %s WITH PASSWORD '%s'", escapedUsername, escapedPassword)
+		// Note: escapedPassword already includes surrounding quotes from QuoteLiteral
+		query := fmt.Sprintf("ALTER USER %s WITH PASSWORD %s", escapedUsername, escapedPassword)
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
 			return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateUser.updateUserPassword")
 		}
 	} else {
 		// Create new user - PostgreSQL doesn't support parameters in CREATE USER
-		query := fmt.Sprintf("CREATE USER %s WITH PASSWORD '%s'", escapedUsername, escapedPassword)
+		// Note: escapedPassword already includes surrounding quotes from QuoteLiteral
+		query := fmt.Sprintf("CREATE USER %s WITH PASSWORD %s", escapedUsername, escapedPassword)
 		_, err = db.ExecContext(connCtx, query)
 		if err != nil {
 			return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("CreateOrUpdateUser.createUser")
 		}
+	}
+
+	return nil
+}
+
+// DeleteUser deletes a PostgreSQL user
+func DeleteUser(
+	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, username string) error {
+	// Connect to PostgreSQL as admin user
+	connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, DefaultDB, sslMode)
+	connStr := connCfg.BuildConnectionString()
+
+	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return operrors.Wrap(operrors.ErrPostgresqlConnectionFailed, err).WithOp("DeleteUser.sql.Open")
+	}
+	defer db.Close()
+
+	// Escape username for SQL identifier
+	escapedUsername := pq.QuoteIdentifier(username)
+
+	// Check if user exists
+	var exists bool
+	err = db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM pg_user WHERE usename = $1)", username).Scan(&exists)
+	if err != nil {
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("DeleteUser.checkUserExists")
+	}
+
+	if !exists {
+		// User doesn't exist, nothing to delete
+		return nil
+	}
+
+	// Drop the user
+	query := fmt.Sprintf("DROP USER %s", escapedUsername)
+	_, err = db.ExecContext(connCtx, query)
+	if err != nil {
+		return operrors.Wrap(operrors.ErrPostgresqlOperationFailed, err).WithOp("DeleteUser.dropUser")
 	}
 
 	return nil
@@ -179,8 +320,8 @@ func CreateOrUpdateRoleGroup(
 	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode,
 	groupRole string, memberRoles []string) error {
 	// Connect to PostgreSQL as admin user
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, sslMode)
+	connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, DefaultDB, sslMode)
+	connStr := connCfg.BuildConnectionString()
 
 	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -284,8 +425,8 @@ func CreateOrUpdateSchema(
 	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode,
 	databaseName, schemaName, owner string) error {
 	// Connect to the specific database
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, databaseName, sslMode)
+	connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, databaseName, sslMode)
+	connStr := connCfg.BuildConnectionString()
 
 	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -333,6 +474,19 @@ func ApplyGrants(
 	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode,
 	databaseName, roleName string, grants []instancev1alpha1.GrantItem,
 	defaultPrivileges []instancev1alpha1.DefaultPrivilegeItem) error {
+	// Validate all privileges before executing any SQL
+	for i, grant := range grants {
+		if err := ValidatePrivileges(grant.Type, grant.Privileges); err != nil {
+			return fmt.Errorf("invalid privilege in grant item %d: %w", i, err)
+		}
+	}
+
+	for i, defaultPriv := range defaultPrivileges {
+		if err := ValidateDefaultPrivileges(defaultPriv.ObjectType, defaultPriv.Privileges); err != nil {
+			return fmt.Errorf("invalid privilege in default privilege item %d: %w", i, err)
+		}
+	}
+
 	connCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -353,8 +507,8 @@ func ApplyGrants(
 
 	// Apply database grants - must be done from postgres database
 	if len(databaseGrants) > 0 {
-		connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-			host, port, adminUser, adminPassword, sslMode)
+		connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, DefaultDB, sslMode)
+		connStr := connCfg.BuildConnectionString()
 
 		db, err := sql.Open("postgres", connStr)
 		if err != nil {
@@ -379,8 +533,8 @@ func ApplyGrants(
 
 	// Apply other grants and default privileges - must be done from the target database
 	if len(otherGrants) > 0 || len(defaultPrivileges) > 0 {
-		connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-			host, port, adminUser, adminPassword, databaseName, sslMode)
+		connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, databaseName, sslMode)
+		connStr := connCfg.BuildConnectionString()
 
 		db, err := sql.Open("postgres", connStr)
 		if err != nil {

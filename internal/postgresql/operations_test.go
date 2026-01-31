@@ -1014,6 +1014,134 @@ func TestCreateOrUpdateRoleGroup_TableDriven(t *testing.T) {
 	}
 }
 
+// deleteUserWithDB is a helper function for testing DeleteUser
+func deleteUserWithDB(ctx context.Context, db *sql.DB, username string) error {
+	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	escapedUsername := `"` + username + `"`
+
+	var exists bool
+	err := db.QueryRowContext(connCtx, "SELECT EXISTS(SELECT 1 FROM pg_user WHERE usename = $1)", username).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check if user exists: %w", err)
+	}
+
+	if !exists {
+		return nil
+	}
+
+	query := fmt.Sprintf("DROP USER %s", escapedUsername)
+	_, err = db.ExecContext(connCtx, query)
+	if err != nil {
+		return fmt.Errorf("failed to drop user: %w", err)
+	}
+
+	return nil
+}
+
+// TestDeleteUser_TableDriven tests DeleteUser with various scenarios
+func TestDeleteUser_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		username      string
+		userExists    bool
+		setupMock     func(sqlmock.Sqlmock)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:       "User exists - delete successfully",
+			username:   "testuser",
+			userExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("DROP USER").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:       "User does not exist - no action",
+			username:   "nonexistent",
+			userExists: false,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("nonexistent").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+			},
+			expectError: false,
+		},
+		{
+			name:     "Check user exists error",
+			username: "testuser",
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnError(errors.New("query error"))
+			},
+			expectError:   true,
+			errorContains: "failed to check if user exists",
+		},
+		{
+			name:       "Drop user error",
+			username:   "testuser",
+			userExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("testuser").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("DROP USER").
+					WillReturnError(errors.New("drop error"))
+			},
+			expectError:   true,
+			errorContains: "failed to drop user",
+		},
+		{
+			name:       "User with special characters",
+			username:   "test-user_123",
+			userExists: true,
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("test-user_123").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("DROP USER").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = deleteUserWithDB(ctx, db, tt.username)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 // TestCreateOrUpdateSchema_TableDriven tests CreateOrUpdateSchema with various scenarios
 func TestCreateOrUpdateSchema_TableDriven(t *testing.T) {
 	tests := []struct {
@@ -1467,6 +1595,631 @@ func TestApplyDefaultPrivilege_TableDriven(t *testing.T) {
 			}
 
 			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestValidatePrivilege_TableDriven tests ValidatePrivilege with various scenarios
+func TestValidatePrivilege_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		grantType     instancev1alpha1.GrantType
+		privilege     string
+		expectError   bool
+		errorContains string
+	}{
+		// Database privileges
+		{
+			name:        "Database - CREATE valid",
+			grantType:   instancev1alpha1.GrantTypeDatabase,
+			privilege:   "CREATE",
+			expectError: false,
+		},
+		{
+			name:        "Database - CONNECT valid",
+			grantType:   instancev1alpha1.GrantTypeDatabase,
+			privilege:   "CONNECT",
+			expectError: false,
+		},
+		{
+			name:        "Database - TEMPORARY valid",
+			grantType:   instancev1alpha1.GrantTypeDatabase,
+			privilege:   "TEMPORARY",
+			expectError: false,
+		},
+		{
+			name:        "Database - TEMP valid",
+			grantType:   instancev1alpha1.GrantTypeDatabase,
+			privilege:   "TEMP",
+			expectError: false,
+		},
+		{
+			name:        "Database - ALL valid",
+			grantType:   instancev1alpha1.GrantTypeDatabase,
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:        "Database - ALL PRIVILEGES valid",
+			grantType:   instancev1alpha1.GrantTypeDatabase,
+			privilege:   "ALL PRIVILEGES",
+			expectError: false,
+		},
+		{
+			name:          "Database - SELECT invalid",
+			grantType:     instancev1alpha1.GrantTypeDatabase,
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Schema privileges
+		{
+			name:        "Schema - CREATE valid",
+			grantType:   instancev1alpha1.GrantTypeSchema,
+			privilege:   "CREATE",
+			expectError: false,
+		},
+		{
+			name:        "Schema - USAGE valid",
+			grantType:   instancev1alpha1.GrantTypeSchema,
+			privilege:   "USAGE",
+			expectError: false,
+		},
+		{
+			name:        "Schema - ALL valid",
+			grantType:   instancev1alpha1.GrantTypeSchema,
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:          "Schema - SELECT invalid",
+			grantType:     instancev1alpha1.GrantTypeSchema,
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Table privileges
+		{
+			name:        "Table - SELECT valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "SELECT",
+			expectError: false,
+		},
+		{
+			name:        "Table - INSERT valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "INSERT",
+			expectError: false,
+		},
+		{
+			name:        "Table - UPDATE valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "UPDATE",
+			expectError: false,
+		},
+		{
+			name:        "Table - DELETE valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "DELETE",
+			expectError: false,
+		},
+		{
+			name:        "Table - TRUNCATE valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "TRUNCATE",
+			expectError: false,
+		},
+		{
+			name:        "Table - REFERENCES valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "REFERENCES",
+			expectError: false,
+		},
+		{
+			name:        "Table - TRIGGER valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "TRIGGER",
+			expectError: false,
+		},
+		{
+			name:        "Table - ALL valid",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:          "Table - EXECUTE invalid",
+			grantType:     instancev1alpha1.GrantTypeTable,
+			privilege:     "EXECUTE",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Sequence privileges
+		{
+			name:        "Sequence - USAGE valid",
+			grantType:   instancev1alpha1.GrantTypeSequence,
+			privilege:   "USAGE",
+			expectError: false,
+		},
+		{
+			name:        "Sequence - SELECT valid",
+			grantType:   instancev1alpha1.GrantTypeSequence,
+			privilege:   "SELECT",
+			expectError: false,
+		},
+		{
+			name:        "Sequence - UPDATE valid",
+			grantType:   instancev1alpha1.GrantTypeSequence,
+			privilege:   "UPDATE",
+			expectError: false,
+		},
+		{
+			name:        "Sequence - ALL valid",
+			grantType:   instancev1alpha1.GrantTypeSequence,
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:          "Sequence - INSERT invalid",
+			grantType:     instancev1alpha1.GrantTypeSequence,
+			privilege:     "INSERT",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Function privileges
+		{
+			name:        "Function - EXECUTE valid",
+			grantType:   instancev1alpha1.GrantTypeFunction,
+			privilege:   "EXECUTE",
+			expectError: false,
+		},
+		{
+			name:        "Function - ALL valid",
+			grantType:   instancev1alpha1.GrantTypeFunction,
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:          "Function - SELECT invalid",
+			grantType:     instancev1alpha1.GrantTypeFunction,
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// All tables privileges
+		{
+			name:        "AllTables - SELECT valid",
+			grantType:   instancev1alpha1.GrantTypeAllTables,
+			privilege:   "SELECT",
+			expectError: false,
+		},
+		{
+			name:        "AllTables - ALL valid",
+			grantType:   instancev1alpha1.GrantTypeAllTables,
+			privilege:   "ALL",
+			expectError: false,
+		},
+		// All sequences privileges
+		{
+			name:        "AllSequences - USAGE valid",
+			grantType:   instancev1alpha1.GrantTypeAllSequences,
+			privilege:   "USAGE",
+			expectError: false,
+		},
+		{
+			name:        "AllSequences - ALL valid",
+			grantType:   instancev1alpha1.GrantTypeAllSequences,
+			privilege:   "ALL",
+			expectError: false,
+		},
+		// Case insensitivity
+		{
+			name:        "Case insensitive - lowercase",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "select",
+			expectError: false,
+		},
+		{
+			name:        "Case insensitive - mixed case",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "SeLeCt",
+			expectError: false,
+		},
+		// Whitespace handling
+		{
+			name:        "Whitespace - leading",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "  SELECT",
+			expectError: false,
+		},
+		{
+			name:        "Whitespace - trailing",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "SELECT  ",
+			expectError: false,
+		},
+		{
+			name:        "Whitespace - both",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privilege:   "  SELECT  ",
+			expectError: false,
+		},
+		// Unknown grant type
+		{
+			name:          "Unknown grant type",
+			grantType:     "unknown_type",
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "unknown grant type",
+		},
+		// Empty privilege
+		{
+			name:          "Empty privilege",
+			grantType:     instancev1alpha1.GrantTypeTable,
+			privilege:     "",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePrivilege(tt.grantType, tt.privilege)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestValidatePrivileges_TableDriven tests ValidatePrivileges with various scenarios
+func TestValidatePrivileges_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		grantType     instancev1alpha1.GrantType
+		privileges    []string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:        "All valid privileges",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privileges:  []string{"SELECT", "INSERT", "UPDATE"},
+			expectError: false,
+		},
+		{
+			name:        "Single valid privilege",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privileges:  []string{"SELECT"},
+			expectError: false,
+		},
+		{
+			name:        "Empty privileges list",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privileges:  []string{},
+			expectError: false,
+		},
+		{
+			name:          "One invalid privilege",
+			grantType:     instancev1alpha1.GrantTypeTable,
+			privileges:    []string{"SELECT", "INVALID", "UPDATE"},
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		{
+			name:          "First privilege invalid",
+			grantType:     instancev1alpha1.GrantTypeTable,
+			privileges:    []string{"INVALID", "SELECT"},
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		{
+			name:          "Last privilege invalid",
+			grantType:     instancev1alpha1.GrantTypeTable,
+			privileges:    []string{"SELECT", "INVALID"},
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		{
+			name:        "Mixed case privileges",
+			grantType:   instancev1alpha1.GrantTypeTable,
+			privileges:  []string{"select", "INSERT", "Update"},
+			expectError: false,
+		},
+		{
+			name:        "ALL PRIVILEGES",
+			grantType:   instancev1alpha1.GrantTypeDatabase,
+			privileges:  []string{"ALL PRIVILEGES"},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePrivileges(tt.grantType, tt.privileges)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestValidateDefaultPrivilege_TableDriven tests ValidateDefaultPrivilege with various scenarios
+func TestValidateDefaultPrivilege_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		objectType    string
+		privilege     string
+		expectError   bool
+		errorContains string
+	}{
+		// Tables
+		{
+			name:        "Tables - SELECT valid",
+			objectType:  "tables",
+			privilege:   "SELECT",
+			expectError: false,
+		},
+		{
+			name:        "Tables - INSERT valid",
+			objectType:  "tables",
+			privilege:   "INSERT",
+			expectError: false,
+		},
+		{
+			name:        "Tables - UPDATE valid",
+			objectType:  "tables",
+			privilege:   "UPDATE",
+			expectError: false,
+		},
+		{
+			name:        "Tables - DELETE valid",
+			objectType:  "tables",
+			privilege:   "DELETE",
+			expectError: false,
+		},
+		{
+			name:        "Tables - TRUNCATE valid",
+			objectType:  "tables",
+			privilege:   "TRUNCATE",
+			expectError: false,
+		},
+		{
+			name:        "Tables - REFERENCES valid",
+			objectType:  "tables",
+			privilege:   "REFERENCES",
+			expectError: false,
+		},
+		{
+			name:        "Tables - TRIGGER valid",
+			objectType:  "tables",
+			privilege:   "TRIGGER",
+			expectError: false,
+		},
+		{
+			name:        "Tables - ALL valid",
+			objectType:  "tables",
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:        "Tables - ALL PRIVILEGES valid",
+			objectType:  "tables",
+			privilege:   "ALL PRIVILEGES",
+			expectError: false,
+		},
+		{
+			name:          "Tables - EXECUTE invalid",
+			objectType:    "tables",
+			privilege:     "EXECUTE",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Sequences
+		{
+			name:        "Sequences - USAGE valid",
+			objectType:  "sequences",
+			privilege:   "USAGE",
+			expectError: false,
+		},
+		{
+			name:        "Sequences - SELECT valid",
+			objectType:  "sequences",
+			privilege:   "SELECT",
+			expectError: false,
+		},
+		{
+			name:        "Sequences - UPDATE valid",
+			objectType:  "sequences",
+			privilege:   "UPDATE",
+			expectError: false,
+		},
+		{
+			name:        "Sequences - ALL valid",
+			objectType:  "sequences",
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:          "Sequences - INSERT invalid",
+			objectType:    "sequences",
+			privilege:     "INSERT",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Functions
+		{
+			name:        "Functions - EXECUTE valid",
+			objectType:  "functions",
+			privilege:   "EXECUTE",
+			expectError: false,
+		},
+		{
+			name:        "Functions - ALL valid",
+			objectType:  "functions",
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:          "Functions - SELECT invalid",
+			objectType:    "functions",
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Types
+		{
+			name:        "Types - USAGE valid",
+			objectType:  "types",
+			privilege:   "USAGE",
+			expectError: false,
+		},
+		{
+			name:        "Types - ALL valid",
+			objectType:  "types",
+			privilege:   "ALL",
+			expectError: false,
+		},
+		{
+			name:          "Types - SELECT invalid",
+			objectType:    "types",
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		// Case insensitivity for object type
+		{
+			name:        "Object type case insensitive - uppercase",
+			objectType:  "TABLES",
+			privilege:   "SELECT",
+			expectError: false,
+		},
+		{
+			name:        "Object type case insensitive - mixed",
+			objectType:  "TaBLeS",
+			privilege:   "SELECT",
+			expectError: false,
+		},
+		// Unknown object type
+		{
+			name:          "Unknown object type",
+			objectType:    "unknown",
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "unknown default privilege object type",
+		},
+		// Empty object type
+		{
+			name:          "Empty object type",
+			objectType:    "",
+			privilege:     "SELECT",
+			expectError:   true,
+			errorContains: "unknown default privilege object type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDefaultPrivilege(tt.objectType, tt.privilege)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestValidateDefaultPrivileges_TableDriven tests ValidateDefaultPrivileges with various scenarios
+func TestValidateDefaultPrivileges_TableDriven(t *testing.T) {
+	tests := []struct {
+		name          string
+		objectType    string
+		privileges    []string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:        "All valid privileges",
+			objectType:  "tables",
+			privileges:  []string{"SELECT", "INSERT", "UPDATE"},
+			expectError: false,
+		},
+		{
+			name:        "Single valid privilege",
+			objectType:  "tables",
+			privileges:  []string{"SELECT"},
+			expectError: false,
+		},
+		{
+			name:        "Empty privileges list",
+			objectType:  "tables",
+			privileges:  []string{},
+			expectError: false,
+		},
+		{
+			name:          "One invalid privilege",
+			objectType:    "tables",
+			privileges:    []string{"SELECT", "EXECUTE", "UPDATE"},
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		{
+			name:          "First privilege invalid",
+			objectType:    "tables",
+			privileges:    []string{"EXECUTE", "SELECT"},
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		{
+			name:          "Last privilege invalid",
+			objectType:    "tables",
+			privileges:    []string{"SELECT", "EXECUTE"},
+			expectError:   true,
+			errorContains: "invalid privilege",
+		},
+		{
+			name:        "Functions with EXECUTE",
+			objectType:  "functions",
+			privileges:  []string{"EXECUTE", "ALL"},
+			expectError: false,
+		},
+		{
+			name:        "Types with USAGE",
+			objectType:  "types",
+			privileges:  []string{"USAGE"},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDefaultPrivileges(tt.objectType, tt.privileges)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }

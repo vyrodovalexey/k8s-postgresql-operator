@@ -12,6 +12,11 @@ spec:
   template:
     metadata:
       annotations:
+        {{- if .Values.metrics.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -66,6 +71,24 @@ spec:
         - --postgresql-connection-timeout-secs={{ .Values.operator.postgresqlConnectionTimeoutSecs }}
         - --vault-availability-retries={{ .Values.operator.vaultAvailabilityRetries }}
         - --vault-availability-retry-delay-secs={{ .Values.operator.vaultAvailabilityRetryDelaySecs }}
+        - --vault-auth-timeout-secs={{ .Values.operator.vaultAuthTimeoutSecs }}
+        - --log-level={{ .Values.operator.logLevel }}
+        - --postgresql-rate-limit-per-second={{ .Values.operator.postgresqlRateLimitPerSecond }}
+        - --postgresql-rate-limit-burst={{ .Values.operator.postgresqlRateLimitBurst }}
+        - --vault-rate-limit-per-second={{ .Values.operator.vaultRateLimitPerSecond }}
+        - --vault-rate-limit-burst={{ .Values.operator.vaultRateLimitBurst }}
+        - --retry-initial-interval-ms={{ .Values.operator.retry.initialIntervalMs }}
+        - --retry-max-interval-secs={{ .Values.operator.retry.maxIntervalSecs }}
+        - --retry-max-elapsed-time-secs={{ .Values.operator.retry.maxElapsedTimeSecs }}
+        - --retry-multiplier={{ .Values.operator.retry.multiplier }}
+        - --retry-randomization-factor={{ .Values.operator.retry.randomizationFactor }}
+        {{- if .Values.vaultPKI.enabled }}
+        - --vault-pki-enabled=true
+        - --vault-pki-mount-path={{ .Values.vaultPKI.mountPath }}
+        - --vault-pki-role={{ .Values.vaultPKI.role }}
+        - --vault-pki-ttl={{ .Values.vaultPKI.ttl }}
+        - --vault-pki-renewal-buffer={{ .Values.vaultPKI.renewalBuffer }}
+        {{- end }}
         env:
         - name: VAULT_ADDR
           value: {{ .Values.vault.addr | quote }}
@@ -73,6 +96,20 @@ spec:
           value: {{ .Values.vault.role | quote }}
         - name: ENABLE_LEADER_ELECTION
           value: {{ .Values.operator.enableLeaderElection | quote }}
+        - name: LOG_LEVEL
+          value: {{ .Values.operator.logLevel | quote }}
+        {{- if .Values.vaultPKI.enabled }}
+        - name: VAULT_PKI_ENABLED
+          value: "true"
+        - name: VAULT_PKI_MOUNT_PATH
+          value: {{ .Values.vaultPKI.mountPath | quote }}
+        - name: VAULT_PKI_ROLE
+          value: {{ .Values.vaultPKI.role | quote }}
+        - name: VAULT_PKI_TTL
+          value: {{ .Values.vaultPKI.ttl | quote }}
+        - name: VAULT_PKI_RENEWAL_BUFFER
+          value: {{ .Values.vaultPKI.renewalBuffer | quote }}
+        {{- end }}
         ports:
         - name: https
           containerPort: {{ .Values.webhook.serverPort }}

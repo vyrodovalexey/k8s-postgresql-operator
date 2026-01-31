@@ -39,6 +39,10 @@ spec:
           spec:
             description: SchemaSpec defines the desired state of Schema
             properties:
+              database:
+                description: Database is the name of the PostgreSQL database where
+                  this schema should be created
+                type: string
               owner:
                 description: Owner is the PostgreSQL user that will own the schema
                 type: string
@@ -50,6 +54,7 @@ spec:
                 description: Schema is the name of the PostgreSQL schema to create
                 type: string
             required:
+            - database
             - owner
             - postgresqlID
             - schema

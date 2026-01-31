@@ -60,6 +60,11 @@ spec:
                     description: |-
                       SSLMode specifies the SSL connection mode
                       Valid values: disable, require, verify-ca, verify-full
+                    enum:
+                    - disable
+                    - require
+                    - verify-ca
+                    - verify-full
                     type: string
                 required:
                 - address

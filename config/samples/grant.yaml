@@ -15,8 +15,8 @@ spec:
 
   # PostgresqlID is the ID of the PostgreSQL instance where this user should be created
   # This must match the postgresqlID in the Postgresql CRD
-  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FD"
-  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  # Password will be stored in Vault at: secret/pdb/test-pg-001/myuser-reader
+  postgresqlID: "test-pg-001"
 
 ---
 apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
@@ -36,8 +36,7 @@ spec:
   
   # PostgresqlID is the ID of the PostgreSQL instance where grants should be applied
   # This must match the postgresqlID in the Postgresql CRD
-  # Example: "2BDAAA95-0465-473B-B270-E5503F1554FD"
-  postgresqlID: "2BDAAA95-0465-473B-B270-E5503F1554FD"
+  postgresqlID: "test-pg-001"
   
   # Grants is the list of grants to apply
   # Grant types: database, schema, table, sequence, function, all_tables, all_sequences

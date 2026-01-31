@@ -39,19 +39,24 @@ spec:
           spec:
             description: UserSpec defines the desired state of User
             properties:
+              deleteFromCRD:
+                description: |-
+                  DeleteFromCRD indicates whether to delete the user from PostgreSQL when the CRD is deleted
+                  If true, the user will be dropped from PostgreSQL when the User CRD is deleted
+                type: boolean
               postgresqlID:
                 description: PostgresqlID is the ID of the PostgreSQL instance where
                   this user should be created
                 type: string
               updatePassword:
-                description: Password is the password for the PostgreSQL user
+                description: UpdatePassword indicates whether to update the password
+                  on reconciliation
                 type: boolean
               username:
                 description: Username is the PostgreSQL username to create
                 type: string
             required:
             - postgresqlID
-            - updatePassword
             - username
             type: object
           status:

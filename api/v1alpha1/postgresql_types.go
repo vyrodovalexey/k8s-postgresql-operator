@@ -65,6 +65,7 @@ type ExternalPostgresqlInstance struct {
 	// Valid values: disable, require, verify-ca, verify-full
 	// +optional
 	// +kubebuilder:default="require"
+	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
 	SSLMode string `json:"sslMode,omitempty"`
 }
 

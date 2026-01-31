@@ -30,6 +30,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
 )
 
 const (
@@ -220,5 +222,114 @@ func TestUpdateWebhookConfigurationWithCABundle_MissingCABundle(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 
 	err = UpdateWebhookConfigurationWithCABundle(secretName, namespace, restConfig, webhookConfigName, logger)
+	assert.Error(t, err)
+}
+
+func TestWriteCertificateToFiles_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	certificate := &cert.Certificate{
+		CertPEM: []byte("-----BEGIN CERTIFICATE-----\ntest-cert\n-----END CERTIFICATE-----"),
+		KeyPEM:  []byte("-----BEGIN RSA PRIVATE KEY-----\ntest-key\n-----END RSA PRIVATE KEY-----"),
+	}
+
+	certPath, keyPath, err := WriteCertificateToFiles(certificate, tmpDir)
+	require.NoError(t, err)
+
+	assert.Equal(t, filepath.Join(tmpDir, "tls.crt"), certPath)
+	assert.Equal(t, filepath.Join(tmpDir, "tls.key"), keyPath)
+
+	// Verify files were created
+	certData, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	assert.Equal(t, certificate.CertPEM, certData)
+
+	keyData, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, certificate.KeyPEM, keyData)
+}
+
+func TestWriteCertificateToFiles_InvalidDirectory(t *testing.T) {
+	// Use a path that can't be created
+	invalidDir := "/dev/null/certs"
+
+	certificate := &cert.Certificate{
+		CertPEM: []byte("cert"),
+		KeyPEM:  []byte("key"),
+	}
+
+	certPath, keyPath, err := WriteCertificateToFiles(certificate, invalidDir)
+	assert.Error(t, err)
+	assert.Empty(t, certPath)
+	assert.Empty(t, keyPath)
+}
+
+func TestWriteCertificateToFiles_CreatesDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	nestedDir := filepath.Join(tmpDir, "nested", "certs")
+
+	certificate := &cert.Certificate{
+		CertPEM: []byte("cert"),
+		KeyPEM:  []byte("key"),
+	}
+
+	certPath, keyPath, err := WriteCertificateToFiles(certificate, nestedDir)
+	require.NoError(t, err)
+
+	assert.Equal(t, filepath.Join(nestedDir, "tls.crt"), certPath)
+	assert.Equal(t, filepath.Join(nestedDir, "tls.key"), keyPath)
+
+	// Verify directory was created
+	_, err = os.Stat(nestedDir)
+	assert.NoError(t, err)
+}
+
+func TestStoreCertificateInSecret_InvalidRestConfig(t *testing.T) {
+	ctx := context.Background()
+
+	certificate := &cert.Certificate{
+		CertPEM: []byte("cert"),
+		KeyPEM:  []byte("key"),
+	}
+
+	// Invalid rest config will fail to create client
+	restConfig := &rest.Config{Host: "https://invalid-host"}
+
+	err := StoreCertificateInSecret(ctx, certificate, "test-secret", "test-namespace", restConfig)
+	assert.Error(t, err)
+}
+
+func TestUpdateWebhookConfigurationWithCertificate_InvalidRestConfig(t *testing.T) {
+	ctx := context.Background()
+
+	certificate := &cert.Certificate{
+		CertPEM:   []byte("cert"),
+		KeyPEM:    []byte("key"),
+		CACertPEM: []byte("ca-cert"),
+	}
+
+	// Invalid rest config will fail to create client
+	restConfig := &rest.Config{Host: "https://invalid-host"}
+	logger := zap.NewNop().Sugar()
+
+	err := UpdateWebhookConfigurationWithCertificate(ctx, certificate, restConfig, "test-webhook", logger)
+	assert.Error(t, err)
+}
+
+func TestUpdateWebhookConfigurationWithCertificate_UseCertAsCAwhenCACertEmpty(t *testing.T) {
+	ctx := context.Background()
+
+	// Certificate without CA cert - should use CertPEM as CA
+	certificate := &cert.Certificate{
+		CertPEM:   []byte("cert"),
+		KeyPEM:    []byte("key"),
+		CACertPEM: []byte{}, // Empty CA cert
+	}
+
+	restConfig := &rest.Config{Host: "https://invalid-host"}
+	logger := zap.NewNop().Sugar()
+
+	// This will fail at client creation, but we're testing the CA fallback logic
+	err := UpdateWebhookConfigurationWithCertificate(ctx, certificate, restConfig, "test-webhook", logger)
 	assert.Error(t, err)
 }

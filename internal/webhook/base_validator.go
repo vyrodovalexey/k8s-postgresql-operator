@@ -35,7 +35,7 @@ type BaseValidatorConfig struct {
 	Client                      client.Client
 	Decoder                     admission.Decoder
 	Log                         *zap.SugaredLogger
-	VaultClient                 *vault.Client
+	VaultClient                 vault.ClientInterface
 	PostgresqlConnectionRetries int
 	PostgresqlConnectionTimeout time.Duration
 	VaultAvailabilityRetries    int
@@ -46,7 +46,7 @@ type BaseValidatorConfig struct {
 func NewBaseValidatorConfig(
 	mgr ctrl.Manager,
 	webhookDecoder admission.Decoder,
-	vaultClient *vault.Client,
+	vaultClient vault.ClientInterface,
 	lg *zap.SugaredLogger,
 	cfg *config.Config,
 ) BaseValidatorConfig {
@@ -74,7 +74,7 @@ func RegisterWebhooks(
 	webhookServer webhook.Server,
 	webhookDecoder admission.Decoder,
 	cfg *config.Config,
-	vaultClient *vault.Client,
+	vaultClient vault.ClientInterface,
 	excludeUserList []string,
 	lg *zap.SugaredLogger,
 ) error {

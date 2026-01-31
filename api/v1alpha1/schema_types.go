@@ -33,6 +33,10 @@ type SchemaSpec struct {
 	// PostgresqlID is the ID of the PostgreSQL instance where this schema should be created
 	// +required
 	PostgresqlID string `json:"postgresqlID"`
+
+	// Database is the name of the PostgreSQL database where this schema should be created
+	// +required
+	Database string `json:"database"`
 }
 
 // SchemaStatus defines the observed state of Schema

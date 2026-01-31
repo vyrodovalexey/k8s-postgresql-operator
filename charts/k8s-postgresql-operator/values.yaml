@@ -73,6 +73,21 @@ vault:
   mountPoint: "secret"
   secretPath: "pdb"
 
+# Vault PKI configuration (optional)
+# When enabled, the operator will use Vault PKI to issue webhook TLS certificates
+# instead of generating self-signed certificates
+vaultPKI:
+  # Enable Vault PKI for webhook certificates
+  enabled: false
+  # Vault PKI secrets engine mount path
+  mountPath: "pki"
+  # Vault PKI role name for certificate issuance
+  role: "webhook-cert"
+  # TTL for issued certificates (default: 30 days)
+  ttl: "720h"
+  # Time before expiry to trigger certificate renewal (default: 24 hours)
+  renewalBuffer: "24h"
+
 # Webhook configuration
 webhook:
   certPath: ""
@@ -103,6 +118,28 @@ operator:
   postgresqlConnectionTimeoutSecs: 10
   vaultAvailabilityRetries: 3
   vaultAvailabilityRetryDelaySecs: 10
+  # Vault authentication timeout in seconds
+  vaultAuthTimeoutSecs: 30
+  # Log level: debug, info, warn, error
+  logLevel: "info"
+  # Rate limiting for PostgreSQL connections
+  postgresqlRateLimitPerSecond: 10
+  postgresqlRateLimitBurst: 20
+  # Rate limiting for Vault requests
+  vaultRateLimitPerSecond: 10
+  vaultRateLimitBurst: 20
+  # Retry configuration (exponential backoff)
+  retry:
+    # Initial interval in milliseconds for exponential backoff
+    initialIntervalMs: 500
+    # Maximum interval in seconds for exponential backoff
+    maxIntervalSecs: 30
+    # Maximum elapsed time in seconds for all retries
+    maxElapsedTimeSecs: 300
+    # Multiplier for exponential backoff interval growth
+    multiplier: 2.0
+    # Randomization factor (jitter) for exponential backoff
+    randomizationFactor: 0.5
 
 # Service configuration
 service:
@@ -122,4 +159,27 @@ webhooks:
   enabled: true
   failurePolicy: Fail
   sideEffects: None
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 1
+  # maxUnavailable: 1
+
+# Metrics configuration
+metrics:
+  # Enable metrics endpoint
+  enabled: true
+  # ServiceMonitor for Prometheus Operator
+  serviceMonitor:
+    # Enable ServiceMonitor (requires Prometheus Operator)
+    enabled: false
+    # Namespace for ServiceMonitor (defaults to release namespace)
+    namespace: ""
+    # Scrape interval
+    interval: "30s"
+    # Scrape timeout
+    scrapeTimeout: "10s"
+    # Additional labels for ServiceMonitor
+    labels: {}
 

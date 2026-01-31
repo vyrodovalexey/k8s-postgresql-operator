@@ -26,13 +26,18 @@ type UserSpec struct {
 	// +required
 	Username string `json:"username"`
 
-	// Password is the password for the PostgreSQL user
-	// +required
-	UpdatePassword bool `json:"updatePassword"`
+	// UpdatePassword indicates whether to update the password on reconciliation
+	// +optional
+	UpdatePassword bool `json:"updatePassword,omitempty"`
 
 	// PostgresqlID is the ID of the PostgreSQL instance where this user should be created
 	// +required
 	PostgresqlID string `json:"postgresqlID"`
+
+	// DeleteFromCRD indicates whether to delete the user from PostgreSQL when the CRD is deleted
+	// If true, the user will be dropped from PostgreSQL when the User CRD is deleted
+	// +optional
+	DeleteFromCRD bool `json:"deleteFromCRD,omitempty"`
 }
 
 // UserStatus defines the observed state of User

@@ -28,7 +28,7 @@ import (
 
 // checkVaultAvailability checks if Vault is available with retry logic
 func checkVaultAvailability(
-	ctx context.Context, vaultClient *vault.Client, log *zap.SugaredLogger,
+	ctx context.Context, vaultClient vault.ClientInterface, log *zap.SugaredLogger,
 	retries int, retryDelay time.Duration) error {
 	if vaultClient == nil {
 		return fmt.Errorf("vault client is not configured")

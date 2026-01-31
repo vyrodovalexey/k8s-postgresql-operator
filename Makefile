@@ -121,6 +121,114 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
+##@ Testing
+
+.PHONY: test
+test: ## Run unit tests
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/unit.out -covermode=atomic ./internal/...
+
+.PHONY: test-functional
+test-functional: ## Run functional tests
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/functional.out -covermode=atomic -tags=functional ./test/functional/...
+
+.PHONY: test-integration
+test-integration: ## Run integration tests (requires PostgreSQL and Vault)
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/integration.out -covermode=atomic -tags=integration -v -timeout 10m ./test/integration/...
+
+.PHONY: test-e2e
+test-e2e: ## Run e2e tests (requires Kubernetes cluster)
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/e2e.out -covermode=atomic -tags=e2e -v -timeout 15m ./test/e2e/...
+
+.PHONY: test-e2e-real
+test-e2e-real: ## Run e2e tests against real Kubernetes cluster
+	mkdir -p coverage
+	USE_REAL_CLUSTER=true go test -race -coverprofile=coverage/e2e.out -covermode=atomic -tags=e2e -v -timeout 15m ./test/e2e/...
+
+.PHONY: test-all
+test-all: test test-functional test-integration test-e2e ## Run all tests
+
+.PHONY: test-coverage
+test-coverage: ## Generate combined test coverage report
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/unit.out -covermode=atomic ./internal/... ./cmd/...
+	@echo "Coverage report generated at coverage/unit.out"
+
+.PHONY: test-env-up
+test-env-up: ## Start test environment (PostgreSQL and Vault)
+	cd test/docker-compose && docker-compose up -d
+	@echo "Waiting for services to be ready..."
+	@sleep 5
+	./test/scripts/setup-vault.sh
+
+.PHONY: test-env-down
+test-env-down: ## Stop test environment
+	cd test/docker-compose && docker-compose down -v
+
+.PHONY: test-env-setup-vault
+test-env-setup-vault: ## Setup Vault for testing
+	./test/scripts/setup-vault.sh
+
+.PHONY: test-env-setup-vault-k8s
+test-env-setup-vault-k8s: ## Setup Vault with Kubernetes integration
+	./test/scripts/setup-vault-k8s.sh
+
+.PHONY: test-env-setup-vault-pki
+test-env-setup-vault-pki: ## Setup Vault PKI for testing
+	./test/scripts/setup-vault-pki.sh
+
+.PHONY: test-vault-pki
+test-vault-pki: ## Run Vault PKI integration tests
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/vault-pki.out -covermode=atomic -tags=integration -v -timeout 10m ./test/integration/... -run TestIntegration_VaultPKI
+
+.PHONY: test-env-up-full
+test-env-up-full: test-env-up test-env-setup-vault-pki ## Start full test environment with PKI
+
+.PHONY: test-env-setup-vault-local-k8s
+test-env-setup-vault-local-k8s: ## Setup Docker Vault for local Kubernetes integration
+	./test/scripts/setup-vault-local-k8s.sh
+
+.PHONY: test-env-up-k8s
+test-env-up-k8s: test-env-up test-env-setup-vault-local-k8s ## Start test environment with full K8s integration
+
+.PHONY: test-e2e-local
+test-e2e-local: ## Run comprehensive e2e test with local K8s cluster
+	./test/scripts/e2e-local-test.sh
+
+.PHONY: test-e2e-local-verbose
+test-e2e-local-verbose: ## Run comprehensive e2e test with verbose output
+	./test/scripts/e2e-local-test.sh --verbose
+
+.PHONY: test-e2e-local-cleanup
+test-e2e-local-cleanup: ## Clean up e2e test resources
+	./test/scripts/e2e-local-test.sh --cleanup
+
+##@ Helm
+
+.PHONY: helm-lint
+helm-lint: ## Lint Helm chart
+	helm lint charts/k8s-postgresql-operator
+
+.PHONY: helm-template
+helm-template: ## Generate Helm templates
+	helm template k8s-postgresql-operator charts/k8s-postgresql-operator
+
+.PHONY: helm-template-vault-pki
+helm-template-vault-pki: ## Generate Helm templates with Vault PKI enabled
+	helm template k8s-postgresql-operator charts/k8s-postgresql-operator --set vaultPKI.enabled=true
+
+.PHONY: helm-package
+helm-package: ## Package Helm chart
+	helm package charts/k8s-postgresql-operator -d dist/
+
+.PHONY: helm-test
+helm-test: helm-lint helm-template helm-template-vault-pki ## Run all Helm tests
+	@echo "Helm tests passed!"
+
 ##@ Build
 
 .PHONY: build
@@ -141,6 +249,10 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-scan
+docker-scan: ## Scan docker image with Trivy
+	trivy image --severity HIGH,CRITICAL ${IMG}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -210,7 +322,7 @@ CONTROLLER_TOOLS_VERSION ?= v0.18.0
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
-GOLANGCI_LINT_VERSION ?= v2.1.0
+GOLANGCI_LINT_VERSION ?= v2.8.0
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -316,3 +428,12 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+##@ Cleanup
+
+.PHONY: clean
+clean: ## Clean build artifacts
+	rm -rf bin/
+	rm -rf dist/
+	rm -rf coverage/
+	rm -f Dockerfile.cross

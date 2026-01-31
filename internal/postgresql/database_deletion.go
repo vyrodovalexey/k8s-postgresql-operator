@@ -29,8 +29,8 @@ import (
 func CloseAllSessions(
 	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName string) error {
 	// Connect to PostgreSQL as admin user (must connect to postgres database, not the target database)
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, sslMode)
+	connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, DefaultDB, sslMode)
+	connStr := connCfg.BuildConnectionString()
 
 	connCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -70,8 +70,8 @@ func DeleteDatabase(
 	}
 
 	// Connect to PostgreSQL as admin user (must connect to postgres database, not the target database)
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
-		host, port, adminUser, adminPassword, sslMode)
+	connCfg := NewConnectionConfig(host, port, adminUser, adminPassword, DefaultDB, sslMode)
+	connStr := connCfg.BuildConnectionString()
 
 	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

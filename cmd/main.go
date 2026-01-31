@@ -19,13 +19,15 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/constants"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/logging"
-	"go.uber.org/zap/zapcore"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -63,16 +65,27 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// nolint:gocyclo // main function orchestrates multiple setup steps which requires complex control flow
+// nolint:gocyclo,funlen // main function orchestrates multiple setup steps which requires complex control flow
 func main() {
-	// Создаем новый экземпляр конфигурации
+	// Create a new configuration instance
 	cfg := config.New()
-	// Парсим настройки конфигурации
-	ConfigParser(cfg)
+	// Parse configuration settings - fatal on error
+	if err := ConfigParser(cfg); err != nil {
+		// Use standard log since logger is not yet initialized
+		fmt.Fprintf(os.Stderr, "Fatal: failed to parse configuration: %v\n", err)
+		os.Exit(1)
+	}
 
-	var tlsOpts []func(*tls.Config)
+	// Create root context that will be cancelled on shutdown
+	// This context is used throughout the application for graceful shutdown
+	// Created early so it can be used in all initialization steps
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	lg := logging.NewLogging(zapcore.InfoLevel)
+	tlsOpts := make([]func(*tls.Config), 0, 1)
+
+	// Create logger with configurable log level
+	lg := logging.NewLoggingFromString(cfg.LogLevel)
 
 	// Set the logger for controller-runtime
 	// Convert SugaredLogger to Logger and wrap it for controller-runtime
@@ -106,14 +119,46 @@ func main() {
 
 	// Define webhooks
 	webhookNames := cfg.SetupWebhooksList()
-	// Setup webhook certificates
-	webhookCertPath, webhookKeyPath := k8sclient.SetupWebhookCertificates(cfg, webhookNames, lg)
+
+	// Discover current namespace
+	namespace := k8sclient.GetCurrentNamespace(cfg.K8sNamespacePath)
+
+	// Create certificate provider factory
+	providerFactory, err := cert.NewProviderFactory(cert.ProviderFactoryOptions{
+		Config:     cfg,
+		RestConfig: ctrl.GetConfigOrDie(),
+		Logger:     lg,
+		Namespace:  namespace,
+	})
+	if err != nil {
+		lg.Errorw("Failed to create certificate provider factory", "error", err)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: context cancellation not critical on fatal error
+	}
+
+	// Log the provider type that will be used
+	lg.Infow("Certificate provider type determined",
+		"provider_type", providerFactory.DetermineProviderType())
+
+	// Create the certificate provider with context for proper cancellation handling
+	certProvider, err := providerFactory.CreateProviderWithContext(ctx)
+	if err != nil {
+		lg.Errorw("Failed to create certificate provider", "error", err)
+		os.Exit(1)
+	}
+	lg.Infow("Certificate provider initialized", "type", certProvider.Type())
+
+	// Setup webhook certificates using the provider
+	webhookCertPath, webhookKeyPath, err := k8sclient.SetupWebhookCertificatesWithProvider(
+		ctx, cfg, webhookNames, certProvider, lg)
+	if err != nil {
+		lg.Errorw("Failed to setup webhook certificates", "error", err)
+		os.Exit(1)
+	}
 
 	// Initialize webhook certificate watcher
-	var err error
 	webhookCertWatcher, err = certwatcher.New(webhookCertPath, webhookKeyPath)
 	if err != nil {
-		lg.Error(err, "Failed to initialize webhook certificate watcher")
+		lg.Errorw("Failed to initialize webhook certificate watcher", "error", err)
 		os.Exit(1)
 	}
 
@@ -159,14 +204,20 @@ func main() {
 	// Initialize Vault client if environment variables are set
 	var vaultClient *vault.Client
 	if cfg.VaultAddr != "" {
-		vc, err := vault.NewClient(cfg.VaultAddr, cfg.VaultRole, cfg.K8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath)
-		if err != nil {
-			lg.Error(err, "unable to create Vault client")
-			os.Exit(1)
-		} else {
-			vaultClient = vc
-			lg.Infow("Vault client initialized successfully")
+		vaultOpts := vault.ClientOptions{
+			AuthTimeout: cfg.VaultAuthTimeout(),
 		}
+		lg.Infow("Initializing Vault client",
+			"address", cfg.VaultAddr,
+			"authTimeout", cfg.VaultAuthTimeout())
+		vc, err := vault.NewClientWithOptions(
+			ctx, cfg.VaultAddr, cfg.VaultRole, cfg.K8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath, vaultOpts)
+		if err != nil {
+			lg.Errorw("unable to create Vault client", "error", err)
+			os.Exit(1)
+		}
+		vaultClient = vc
+		lg.Infow("Vault client initialized successfully")
 	} else {
 		lg.Infow("VAULT_ADDR not set, Vault integration disabled")
 	}
@@ -220,27 +271,26 @@ func main() {
 	// Initialize metrics collector
 	metricsCollector := metrics.NewCollector(mgr.GetClient(), lg)
 
-	// Collect metrics on startup
-	startupCtx := context.Background()
-	if err := metricsCollector.CollectMetrics(startupCtx); err != nil {
-		lg.Error(err, "failed to collect initial metrics")
+	// Collect metrics on startup using the root context
+	if err := metricsCollector.CollectMetrics(ctx); err != nil {
+		lg.Errorw("failed to collect initial metrics", "error", err)
 		// Don't exit, metrics collection failure shouldn't prevent operator from starting
 	} else {
 		lg.Infow("Initial metrics collection completed")
 	}
 
-	// Set up periodic metrics collection (every 30 seconds)
-	// Use a context that will be cancelled when the manager stops
-	metricsCtx, metricsCancel := context.WithCancel(context.Background())
+	// Set up periodic metrics collection
+	// Use a child context derived from the root context for graceful shutdown
+	metricsCtx, metricsCancel := context.WithCancel(ctx)
 	go func() {
 		defer metricsCancel()
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(constants.DefaultMetricsCollectionInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				if err := metricsCollector.CollectMetrics(metricsCtx); err != nil {
-					lg.Error(err, "failed to collect metrics")
+					lg.Errorw("failed to collect metrics", "error", err)
 				}
 			case <-metricsCtx.Done():
 				return
