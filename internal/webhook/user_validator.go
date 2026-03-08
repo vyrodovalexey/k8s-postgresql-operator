@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -35,7 +38,19 @@ type UserValidator struct {
 }
 
 // Handle handles the admission request for User resources
-func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *UserValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"UserValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "user"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var user instancev1alpha1.User
 
 	if err := v.Decoder.Decode(req, &user); err != nil {
@@ -45,10 +60,10 @@ func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admis
 
 	// Check if postgresqlID and username are specified
 	if user.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if user.Spec.Username == "" {
-		return admission.Allowed("No username specified")
+		return admission.Denied("username is required")
 	}
 
 	postgresqlID := user.Spec.PostgresqlID
@@ -104,8 +119,10 @@ func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admis
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "username", username,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "username", username,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

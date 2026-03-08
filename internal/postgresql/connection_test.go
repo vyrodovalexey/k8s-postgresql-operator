@@ -45,6 +45,85 @@ func TestTestConnection_InvalidConnection(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to connect to PostgreSQL")
 }
 
+func TestTestConnection_MultipleRetries(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	// Test with multiple retries - all should fail with invalid host
+	connected, err := TestConnection(ctx, "invalid-host", 5432, "postgres", "user", "password", "disable", logger, 2, 1*time.Millisecond)
+
+	assert.False(t, connected)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to connect to PostgreSQL after 2 attempts")
+}
+
+func TestTestConnection_SingleRetry(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	// Test with single retry
+	connected, err := TestConnection(ctx, "invalid-host", 5432, "postgres", "user", "password", "disable", logger, 1, 1*time.Millisecond)
+
+	assert.False(t, connected)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to connect to PostgreSQL after 1 attempts")
+}
+
+func TestTestConnection_Success(t *testing.T) {
+	// Start mock PostgreSQL server that responds to SELECT 1
+	srv := newMockPGServer(t, func(q string) mockPGResponse {
+		return mockPGResponse{
+			isSelect: true,
+			value:    "1",
+		}
+	})
+	defer srv.close()
+
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	connected, err := TestConnection(ctx, "127.0.0.1", srv.port(), "postgres", "user", "password", "disable", logger, 1, 1*time.Millisecond)
+
+	assert.True(t, connected)
+	assert.NoError(t, err)
+}
+
+func TestTestConnection_SuccessAfterRetry(t *testing.T) {
+	attempt := 0
+	srv := newMockPGServer(t, func(q string) mockPGResponse {
+		attempt++
+		if attempt <= 1 {
+			return mockPGResponse{isError: true, errorMsg: "temporary failure"}
+		}
+		return mockPGResponse{isSelect: true, value: "1"}
+	})
+	defer srv.close()
+
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	connected, err := TestConnection(ctx, "127.0.0.1", srv.port(), "postgres", "user", "password", "disable", logger, 3, 1*time.Millisecond)
+
+	assert.True(t, connected)
+	assert.NoError(t, err)
+}
+
+func TestTestConnection_UnexpectedResult(t *testing.T) {
+	srv := newMockPGServer(t, func(q string) mockPGResponse {
+		return mockPGResponse{isSelect: true, value: "42"}
+	})
+	defer srv.close()
+
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	connected, err := TestConnection(ctx, "127.0.0.1", srv.port(), "postgres", "user", "password", "disable", logger, 1, 1*time.Millisecond)
+
+	assert.False(t, connected)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected query result")
+}
+
 func TestTestConnectionFromPostgresql_NoExternalInstance(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctx := context.Background()
@@ -100,5 +179,45 @@ func TestTestConnectionFromPostgresql_DefaultValues(t *testing.T) {
 	err := TestConnectionFromPostgresql(ctx, postgresql, nil, logger, 1, 1*time.Second)
 
 	// Should return nil when vault client is not configured (skips test)
+	assert.NoError(t, err)
+}
+
+func TestTestConnectionFromPostgresql_WithCustomPort(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	postgresql := &instancev1alpha1.Postgresql{
+		Spec: instancev1alpha1.PostgresqlSpec{
+			ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+				PostgresqlID: "test-id",
+				Address:      "localhost",
+				Port:         5433,
+				SSLMode:      "disable",
+			},
+		},
+	}
+
+	// Should return nil when vault client is not configured (skips test)
+	err := TestConnectionFromPostgresql(ctx, postgresql, nil, logger, 1, 1*time.Second)
+	assert.NoError(t, err)
+}
+
+func TestTestConnectionFromPostgresql_WithCustomSSLMode(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	postgresql := &instancev1alpha1.Postgresql{
+		Spec: instancev1alpha1.PostgresqlSpec{
+			ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+				PostgresqlID: "test-id",
+				Address:      "localhost",
+				Port:         5432,
+				SSLMode:      "verify-full",
+			},
+		},
+	}
+
+	// Should return nil when vault client is not configured (skips test)
+	err := TestConnectionFromPostgresql(ctx, postgresql, nil, logger, 1, 1*time.Second)
 	assert.NoError(t, err)
 }

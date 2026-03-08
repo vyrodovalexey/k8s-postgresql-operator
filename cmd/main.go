@@ -23,9 +23,13 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/logging"
-	"go.uber.org/zap/zapcore"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -63,62 +67,29 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// nolint:gocyclo // main function orchestrates multiple setup steps which requires complex control flow
-func main() {
-	// Создаем новый экземпляр конфигурации
-	cfg := config.New()
-	// Парсим настройки конфигурации
-	ConfigParser(cfg)
-
-	var tlsOpts []func(*tls.Config)
-
-	lg := logging.NewLogging(zapcore.InfoLevel)
-
-	// Set the logger for controller-runtime
-	// Convert SugaredLogger to Logger and wrap it for controller-runtime
-	zapLogger := lg.Desugar()
-	ctrl.SetLogger(zapr.NewLogger(zapLogger))
-
-	// Configure klog to use JSON format by redirecting to zap logger
-	// This ensures leader election logs are also in JSON format
-	klog.SetLogger(zapr.NewLogger(zapLogger))
-
-	lg.Infow("Server starting with: ")
-
-	// if the enable-http2 flag is false (the default), http/2 should be disabled
-	// due to its vulnerabilities. More specifically, disabling http/2 will
-	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
-	// Rapid Reset CVEs. For more information see:
-	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
-	// - https://github.com/advisories/GHSA-4374-p667-p6c8
-	disableHTTP2 := func(c *tls.Config) {
-		lg.Infow("disabling http/2")
-		c.NextProtos = []string{"http/1.1"}
-	}
-
-	tlsOpts = append(tlsOpts, disableHTTP2)
-
-	// Create watcher for webhook certificates
-	var webhookCertWatcher *certwatcher.CertWatcher
-
-	// Initial webhook TLS options
+// setupWebhookServer creates and configures the webhook server
+func setupWebhookServer(
+	cfg *config.Config, tlsOpts []func(*tls.Config),
+	lg *zap.SugaredLogger, vaultClient *vault.Client,
+) (webhook.Server, *certwatcher.CertWatcher) {
 	webhookTLSOpts := tlsOpts
-
-	// Define webhooks
 	webhookNames := cfg.SetupWebhooksList()
-	// Setup webhook certificates
-	webhookCertPath, webhookKeyPath := k8sclient.SetupWebhookCertificates(cfg, webhookNames, lg)
 
-	// Initialize webhook certificate watcher
-	var err error
-	webhookCertWatcher, err = certwatcher.New(webhookCertPath, webhookKeyPath)
+	webhookCertPath, webhookKeyPath := resolveWebhookCerts(
+		cfg, vaultClient, webhookNames, lg,
+	)
+
+	webhookCertWatcher, err := certwatcher.New(
+		webhookCertPath, webhookKeyPath,
+	)
 	if err != nil {
-		lg.Error(err, "Failed to initialize webhook certificate watcher")
+		lg.Errorw("Failed to initialize webhook certificate watcher",
+			"error", err)
 		os.Exit(1)
 	}
 
-	webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
-		config.GetCertificate = webhookCertWatcher.GetCertificate
+	webhookTLSOpts = append(webhookTLSOpts, func(c *tls.Config) {
+		c.GetCertificate = webhookCertWatcher.GetCertificate
 	})
 
 	webhookServer := webhook.NewServer(webhook.Options{
@@ -132,48 +103,187 @@ func main() {
 		"cert-path", webhookCertPath,
 		"key-path", webhookKeyPath)
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsserver.Options{BindAddress: ":8080"}, // Enable metrics server on port 8080
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: cfg.ProbeAddr,
-		LeaderElection:         cfg.EnableLeaderElection,
-		LeaderElectionID:       "9e7b1538.postgresql-operator.vyrodovalexey.github.com",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
-	})
+	return webhookServer, webhookCertWatcher
+}
+
+// resolveWebhookCerts determines the certificate paths based on config
+func resolveWebhookCerts(
+	cfg *config.Config, vaultClient *vault.Client,
+	webhookNames []string, lg *zap.SugaredLogger,
+) (certPath, keyPath string) {
+	if cfg.VaultPKIEnabled && vaultClient != nil &&
+		cfg.WebhookCertPath == "" {
+		return setupVaultPKICerts(cfg, vaultClient, webhookNames, lg)
+	}
+	return k8sclient.SetupWebhookCertificates(context.Background(), cfg, webhookNames, lg)
+}
+
+// setupVaultPKICerts creates a VaultPKIManager and issues certificates
+func setupVaultPKICerts(
+	cfg *config.Config, vaultClient *vault.Client,
+	webhookNames []string, lg *zap.SugaredLogger,
+) (certPath, keyPath string) {
+	renewalBuffer, err := time.ParseDuration(cfg.VaultPKIRenewalBuffer)
 	if err != nil {
-		lg.Error(err, "unable to start manager")
+		lg.Errorw("Failed to parse Vault PKI renewal buffer",
+			"value", cfg.VaultPKIRenewalBuffer, "error", err)
 		os.Exit(1)
 	}
 
-	// Initialize Vault client if environment variables are set
-	var vaultClient *vault.Client
-	if cfg.VaultAddr != "" {
-		vc, err := vault.NewClient(cfg.VaultAddr, cfg.VaultRole, cfg.K8sTokenPath, cfg.VaultMountPoint, cfg.VaultSecretPath)
-		if err != nil {
-			lg.Error(err, "unable to create Vault client")
-			os.Exit(1)
-		} else {
-			vaultClient = vc
-			lg.Infow("Vault client initialized successfully")
-		}
-	} else {
-		lg.Infow("VAULT_ADDR not set, Vault integration disabled")
+	namespace := k8sclient.GetCurrentNamespace(cfg.K8sNamespacePath)
+
+	tempCertDir, err := os.MkdirTemp("", "vault-pki-certs-")
+	if err != nil {
+		lg.Errorw("Failed to create temp dir for Vault PKI certs",
+			"error", err)
+		os.Exit(1)
 	}
 
-	// Setup all controllers
-	if err := controller.SetupControllers(mgr, cfg, vaultClient, lg); err != nil {
-		lg.Error(err, "unable to setup controllers")
+	pkiManager := cert.NewVaultPKIManager(
+		vaultClient, cfg.VaultPKIMountPath, cfg.VaultPKIRole,
+		cfg.VaultPKITTL, renewalBuffer,
+		cfg.WebhookK8sServiceName, namespace, tempCertDir, lg,
+	)
+
+	lg.Infow("Using Vault PKI for webhook certificates",
+		"mount-path", cfg.VaultPKIMountPath,
+		"role", cfg.VaultPKIRole,
+		"ttl", cfg.VaultPKITTL,
+		"renewal-buffer", cfg.VaultPKIRenewalBuffer,
+	)
+
+	certPath, keyPath = k8sclient.SetupWebhookCertificatesWithVaultPKI(
+		context.Background(), pkiManager, cfg, webhookNames, lg,
+	)
+
+	pkiManager.StartRenewal(context.Background())
+
+	return certPath, keyPath
+}
+
+// initVaultClient initializes the Vault client if configured
+func initVaultClient(
+	cfg *config.Config, lg *zap.SugaredLogger,
+) *vault.Client {
+	if cfg.VaultAddr == "" {
+		lg.Infow("VAULT_ADDR not set, Vault integration disabled")
+		return nil
+	}
+
+	vc, err := vault.NewClient(
+		context.Background(), cfg.VaultAddr, cfg.VaultRole, cfg.K8sTokenPath,
+		cfg.VaultMountPoint, cfg.VaultSecretPath,
+	)
+	if err != nil {
+		lg.Errorw("unable to create Vault client", "error", err)
+		os.Exit(1)
+	}
+	lg.Infow("Vault client initialized successfully")
+	return vc
+}
+
+// parseExcludeUserList parses the exclude user list from config
+func parseExcludeUserList(
+	cfg *config.Config, lg *zap.SugaredLogger,
+) []string {
+	excludeUserList := []string{}
+	if cfg.ExcludeUserList != "" {
+		excludeUserList = strings.Split(cfg.ExcludeUserList, ",")
+		for i, user := range excludeUserList {
+			excludeUserList[i] = strings.TrimSpace(user)
+		}
+		lg.Infow("Exclude user list configured", "users", excludeUserList)
+	}
+	return excludeUserList
+}
+
+// startPeriodicMetrics starts periodic metrics collection
+func startPeriodicMetrics(
+	ctx context.Context, collector *metrics.Collector, lg *zap.SugaredLogger, interval time.Duration,
+) {
+	if err := collector.CollectMetrics(ctx); err != nil {
+		lg.Errorw("Failed to collect initial metrics", "error", err)
+	} else {
+		lg.Infow("Initial metrics collection completed")
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := collector.CollectMetrics(ctx); err != nil {
+					lg.Errorw("Failed to collect metrics", "error", err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// nolint:gocyclo // main function orchestrates multiple setup steps which requires complex control flow
+func main() {
+	cfg := config.New()
+	ConfigParser(cfg)
+
+	lg := logging.NewLogging(zapcore.InfoLevel)
+
+	// Set the logger for controller-runtime and klog
+	zapLogger := lg.Desugar()
+	ctrl.SetLogger(zapr.NewLogger(zapLogger))
+	klog.SetLogger(zapr.NewLogger(zapLogger))
+
+	// Initialize OpenTelemetry tracing
+	tp, tpErr := telemetry.InitTracerProvider(
+		context.Background(),
+		"k8s-postgresql-operator",
+		cfg.OTLPEndpoint,
+		cfg.OTLPInsecure,
+	)
+	if tpErr != nil {
+		lg.Errorw("Failed to initialize tracer provider",
+			"error", tpErr)
+		os.Exit(1)
+	}
+
+	lg.Infow("Server starting with: ")
+
+	// Disable http/2 due to vulnerabilities (CVE mitigations)
+	tlsOpts := []func(*tls.Config){
+		func(c *tls.Config) {
+			lg.Infow("disabling http/2")
+			c.NextProtos = []string{"http/1.1"}
+		},
+	}
+
+	// Initialize Vault client before webhook server setup
+	// so Vault PKI can be used for webhook certificates
+	vaultClient := initVaultClient(cfg, lg)
+
+	webhookServer, webhookCertWatcher := setupWebhookServer(
+		cfg, tlsOpts, lg, vaultClient,
+	)
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                metricsserver.Options{BindAddress: ":8080"},
+		WebhookServer:          webhookServer,
+		HealthProbeBindAddress: cfg.ProbeAddr,
+		LeaderElection:         cfg.EnableLeaderElection,
+		LeaderElectionID: "9e7b1538.postgresql-operator" +
+			".vyrodovalexey.github.com",
+	})
+	if err != nil {
+		lg.Errorw("unable to start manager", "error", err)
+		os.Exit(1)
+	}
+
+	if err := controller.SetupControllers(
+		mgr, cfg, vaultClient, lg,
+	); err != nil {
+		lg.Errorw("unable to setup controllers", "error", err)
 		os.Exit(1)
 	}
 
@@ -182,74 +292,40 @@ func main() {
 	if webhookCertWatcher != nil {
 		lg.Infow("Adding webhook certificate watcher to postgresql operator")
 		if err := mgr.Add(webhookCertWatcher); err != nil {
-			lg.Error(err, "unable to add webhook certificate watcher to manager")
+			lg.Errorw("unable to add webhook certificate watcher to manager", "error", err)
 			os.Exit(1)
 		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		lg.Error(err, "unable to set up health check")
+		lg.Errorw("unable to set up health check", "error", err)
 		os.Exit(1)
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		lg.Error(err, "unable to set up ready check")
+		lg.Errorw("unable to set up ready check", "error", err)
 		os.Exit(1)
 	}
-	// Register webhook handlers
+
 	webhookDecoder := admission.NewDecoder(scheme)
+	excludeUserList := parseExcludeUserList(cfg, lg)
 
-	// Parse exclude user list from comma-separated string (used for UserValidator)
-	excludeUserList := []string{}
-	if cfg.ExcludeUserList != "" {
-		excludeUserList = strings.Split(cfg.ExcludeUserList, ",")
-		// Trim whitespace from each username
-		for i, user := range excludeUserList {
-			excludeUserList[i] = strings.TrimSpace(user)
-		}
-		lg.Infow("Exclude user list configured", "users", excludeUserList)
-	}
-
-	// Register webhooks
 	if err := webhookpkg.RegisterWebhooks(
-		mgr, webhookServer, webhookDecoder, cfg, vaultClient, excludeUserList, lg,
+		mgr, webhookServer, webhookDecoder,
+		cfg, vaultClient, excludeUserList, lg,
 	); err != nil {
-		lg.Error(err, "unable to register webhooks")
+		lg.Errorw("unable to register webhooks", "error", err)
 		os.Exit(1)
 	}
 
-	// Initialize metrics collector
 	metricsCollector := metrics.NewCollector(mgr.GetClient(), lg)
+	ctx := ctrl.SetupSignalHandler()
+	startPeriodicMetrics(ctx, metricsCollector, lg, cfg.MetricsCollectionInterval())
 
-	// Collect metrics on startup
-	startupCtx := context.Background()
-	if err := metricsCollector.CollectMetrics(startupCtx); err != nil {
-		lg.Error(err, "failed to collect initial metrics")
-		// Don't exit, metrics collection failure shouldn't prevent operator from starting
-	} else {
-		lg.Infow("Initial metrics collection completed")
-	}
-
-	// Set up periodic metrics collection (every 30 seconds)
-	// Use a context that will be cancelled when the manager stops
-	metricsCtx, metricsCancel := context.WithCancel(context.Background())
-	go func() {
-		defer metricsCancel()
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := metricsCollector.CollectMetrics(metricsCtx); err != nil {
-					lg.Error(err, "failed to collect metrics")
-				}
-			case <-metricsCtx.Done():
-				return
-			}
-		}
-	}()
-
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		lg.Error(err, "problem starting postgresql operator")
+	if err := mgr.Start(ctx); err != nil {
+		lg.Errorw("Problem starting postgresql operator", "error", err)
+		telemetry.ShutdownTracerProvider(context.Background(), tp)
 		os.Exit(1)
 	}
+
+	telemetry.ShutdownTracerProvider(context.Background(), tp)
 }

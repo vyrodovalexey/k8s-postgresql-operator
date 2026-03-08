@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,19 @@ type RoleGroupValidator struct {
 }
 
 // Handle handles the admission request for RoleGroup resources
-func (v *RoleGroupValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *RoleGroupValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"RoleGroupValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "rolegroup"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var roleGroup instancev1alpha1.RoleGroup
 
 	if err := v.Decoder.Decode(req, &roleGroup); err != nil {
@@ -44,10 +59,10 @@ func (v *RoleGroupValidator) Handle(ctx context.Context, req admission.Request) 
 
 	// Check if postgresqlID and groupRole are specified
 	if roleGroup.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if roleGroup.Spec.GroupRole == "" {
-		return admission.Allowed("No groupRole specified")
+		return admission.Denied("groupRole is required")
 	}
 
 	postgresqlID := roleGroup.Spec.PostgresqlID
@@ -94,8 +109,10 @@ func (v *RoleGroupValidator) Handle(ctx context.Context, req admission.Request) 
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "groupRole", groupRole,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "groupRole", groupRole,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

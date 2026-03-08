@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
@@ -338,6 +339,7 @@ func TestGrantReconciler_Reconcile_TableDriven(t *testing.T) {
 					Client:                      mockClient,
 					VaultClient:                 nil, // Will be nil for most tests
 					Log:                         zap.NewNop().Sugar(),
+					Recorder:                    record.NewFakeRecorder(100),
 					PostgresqlConnectionRetries: 3,
 					PostgresqlConnectionTimeout: 10 * time.Second,
 					VaultAvailabilityRetries:    3,

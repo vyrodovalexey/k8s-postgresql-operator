@@ -21,15 +21,18 @@ import (
 	"fmt"
 	"time"
 
-	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
-	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
-	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
+
+	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
+	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 )
 
 // RoleGroupReconciler reconciles a RoleGroup object
@@ -44,160 +47,123 @@ type RoleGroupReconciler struct {
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
-func (r *RoleGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Fetch the RoleGroup instance
+func (r *RoleGroupReconciler) Reconcile(
+	ctx context.Context, req ctrl.Request,
+) (ctrl.Result, error) {
+	ctx, span := otel.Tracer("controller").Start(ctx,
+		"RoleGroupReconciler.Reconcile",
+		trace.WithAttributes(
+			attribute.String("controller", "rolegroup"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
+	startTime := time.Now()
+	metrics.IncReconcileTotal("rolegroup")
+	defer func() {
+		metrics.ObserveReconcileDuration("rolegroup", time.Since(startTime))
+	}()
+
 	roleGroup := &instancev1alpha1.RoleGroup{}
 	if err := r.Get(ctx, req.NamespacedName, roleGroup); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		r.Log.Error(err, "Failed to get RoleGroup")
+		r.Log.Errorw("Failed to get RoleGroup", "error", err)
+		metrics.IncReconcileErrors("rolegroup")
 		return ctrl.Result{}, err
 	}
 
-	// Find PostgreSQL instance by PostgresqlID
-	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, roleGroup.Spec.PostgresqlID)
-	if err != nil {
-		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", roleGroup.Spec.PostgresqlID)
-		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
-			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", roleGroup.Spec.PostgresqlID, err))
+	connInfo, reason, msg := r.resolvePostgresqlConnection(
+		ctx, roleGroup.Spec.PostgresqlID,
+	)
+	if connInfo == nil {
+		controllerhelpers.UpdateRoleGroupCondition(
+			roleGroup, "Ready", metav1.ConditionFalse, reason, msg,
+		)
 		if err := r.Status().Update(ctx, roleGroup); err != nil {
-			r.Log.Error(err, "Failed to update RoleGroup status")
+			r.Log.Errorw("Failed to update RoleGroup status", "error", err)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Check if PostgreSQL instance is connected
-	if !postgresql.Status.Connected {
-		r.Log.Infow("PostgreSQL instance is not connected, waiting", "postgresqlID", roleGroup.Spec.PostgresqlID)
-		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
-			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", roleGroup.Spec.PostgresqlID))
+	if err := r.resolveAdminCredentials(ctx, connInfo); err != nil {
+		controllerhelpers.UpdateRoleGroupCondition(
+			roleGroup, "Ready", metav1.ConditionFalse, "VaultError",
+			fmt.Sprintf("Failed to get credentials from Vault: %v", err),
+		)
 		if err := r.Status().Update(ctx, roleGroup); err != nil {
-			r.Log.Error(err, "Failed to update RoleGroup status")
+			r.Log.Errorw("Failed to update RoleGroup status", "error", err)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Get PostgreSQL connection details
-	externalInstance := postgresql.Spec.ExternalInstance
-	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration",
-			"postgresqlID", roleGroup.Spec.PostgresqlID)
-		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
-			"PostgreSQL instance has no external instance configuration")
-		if err := r.Status().Update(ctx, roleGroup); err != nil {
-			r.Log.Error(err, "Failed to update RoleGroup status")
-		}
-		return ctrl.Result{}, nil
-	}
+	return r.syncRoleGroup(ctx, roleGroup, connInfo)
+}
 
-	port := externalInstance.Port
-	if port == 0 {
-		port = 5432
-	}
+// syncRoleGroup creates or updates the role group in PostgreSQL
+// nolint:unparam // ctrl.Result is kept for Reconcile signature compatibility and future extensibility
+func (r *RoleGroupReconciler) syncRoleGroup(
+	ctx context.Context,
+	roleGroup *instancev1alpha1.RoleGroup,
+	info *connectionInfo,
+) (ctrl.Result, error) {
+	err := pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.CreateOrUpdateRoleGroup(
+			ctx, info.ExternalInstance.Address, info.Port,
+			info.Username, info.Password, info.SSLMode,
+			roleGroup.Spec.GroupRole, roleGroup.Spec.MemberRoles,
+		)
+	}, r.Log, r.PostgresqlConnectionRetries,
+		r.PostgresqlConnectionTimeout, "createOrUpdateRoleGroup")
 
-	sslMode := externalInstance.SSLMode
-	if sslMode == "" {
-		sslMode = pg.DefaultSSLMode
-	}
-
-	var postgresUsername, postgresPassword string
-	if r.VaultClient == nil {
-		r.Log.Infow("Vault client not available")
-		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "VaultNotAvailable",
-			"Vault client is not available")
-		if err := r.Status().Update(ctx, roleGroup); err != nil {
-			r.Log.Error(err, "Failed to update RoleGroup status")
-		}
-		return ctrl.Result{}, nil
-	}
-
-	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
-		ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 	if err != nil {
-		r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
-		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "VaultError",
-			fmt.Sprintf("Failed to get credentials from Vault: %v", err))
-		if err := r.Status().Update(ctx, roleGroup); err != nil {
-			r.Log.Error(err, "Failed to update RoleGroup status")
-		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-	postgresUsername = vaultUsername
-	postgresPassword = vaultPassword
-	r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
-
-	// Create or update role group in PostgreSQL
-	err = pg.ExecuteOperationWithRetry(ctx, func() error {
-		return pg.CreateOrUpdateRoleGroup(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-			roleGroup.Spec.GroupRole, roleGroup.Spec.MemberRoles)
-	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "createOrUpdateRoleGroup")
-	if err != nil {
-		r.Log.Error(err, "Failed to create/update role group in PostgreSQL", "groupRole", roleGroup.Spec.GroupRole)
+		r.Log.Errorw("Failed to create/update role group in PostgreSQL",
+			"error", err, "groupRole", roleGroup.Spec.GroupRole)
 		roleGroup.Status.Created = false
-		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionFalse, "CreateFailed",
+		controllerhelpers.UpdateRoleGroupCondition(
+			roleGroup, "Ready", metav1.ConditionFalse, "CreateFailed",
 			fmt.Sprintf("Failed to create role group: %v", err))
+		r.Recorder.Event(roleGroup, corev1.EventTypeWarning,
+			"CreateFailed",
+			fmt.Sprintf("Failed to create role group %s: %v",
+				roleGroup.Spec.GroupRole, err))
+		metrics.IncReconcileErrors("rolegroup")
 	} else {
 		roleGroup.Status.Created = true
-		updateRoleGroupCondition(roleGroup, "Ready", metav1.ConditionTrue, "Created",
-			fmt.Sprintf("Role group %s successfully created in PostgreSQL", roleGroup.Spec.GroupRole))
+		controllerhelpers.UpdateRoleGroupCondition(
+			roleGroup, "Ready", metav1.ConditionTrue, "Created",
+			fmt.Sprintf("Role group %s successfully created in PostgreSQL",
+				roleGroup.Spec.GroupRole))
 		r.Log.Infow("Role group successfully created in PostgreSQL",
-			"PostgresqlID", roleGroup.Spec.PostgresqlID, "groupRole", roleGroup.Spec.GroupRole)
+			"PostgresqlID", roleGroup.Spec.PostgresqlID,
+			"groupRole", roleGroup.Spec.GroupRole)
+		r.Recorder.Event(roleGroup, corev1.EventTypeNormal,
+			"Created",
+			fmt.Sprintf("Successfully created role group %s",
+				roleGroup.Spec.GroupRole))
 	}
 
 	now := metav1.Now()
 	roleGroup.Status.LastSyncAttempt = &now
 
-	// Update the status
 	if err := r.Status().Update(ctx, roleGroup); err != nil {
-		r.Log.Error(err, "Failed to update RoleGroup status")
+		r.Log.Errorw("Failed to update RoleGroup status", "error", err)
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Infow("Successfully reconciled RoleGroup", "groupRole", roleGroup.Spec.GroupRole)
+	r.Log.Infow("Successfully reconciled RoleGroup",
+		"groupRole", roleGroup.Spec.GroupRole)
 	return ctrl.Result{}, nil
-}
-
-// updateRoleGroupCondition updates or adds a condition to the RoleGroup status using meta.SetStatusCondition
-// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
-func updateRoleGroupCondition(
-	roleGroup *instancev1alpha1.RoleGroup, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: roleGroup.Generation,
-	}
-	meta.SetStatusCondition(&roleGroup.Status.Conditions, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RoleGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	ignoreStatusUpdates := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldObj := e.ObjectOld.(*instancev1alpha1.RoleGroup)
-			newObj := e.ObjectNew.(*instancev1alpha1.RoleGroup)
-
-			if oldObj.Generation != newObj.Generation {
-				return true
-			}
-
-			if oldObj.DeletionTimestamp != newObj.DeletionTimestamp {
-				return true
-			}
-
-			return false
-		},
-		CreateFunc:  func(e event.CreateEvent) bool { return true },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
-		GenericFunc: func(e event.GenericEvent) bool { return true },
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&instancev1alpha1.RoleGroup{}).
 		Named("rolegroup").
-		WithEventFilter(ignoreStatusUpdates).
+		WithEventFilter(controllerhelpers.IgnoreStatusUpdatesPredicate()).
 		Complete(r)
 }

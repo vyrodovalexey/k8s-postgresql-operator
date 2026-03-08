@@ -1636,6 +1636,12 @@ func TestApplyGrants_TableDriven(t *testing.T) {
 			expectError:   true,
 			errorContains: "failed to apply default privilege",
 		},
+		{
+			name:         "No grants and no default privileges - no-op",
+			grants:       []instancev1alpha1.GrantItem{},
+			defaultPrivs: []instancev1alpha1.DefaultPrivilegeItem{},
+			expectError:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1664,6 +1670,1194 @@ func TestApplyGrants_TableDriven(t *testing.T) {
 			}
 
 			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestGetCurrentMembers tests the getCurrentMembers function directly
+func TestGetCurrentMembers(t *testing.T) {
+	tests := []struct {
+		name          string
+		groupRole     string
+		setupMock     func(sqlmock.Sqlmock)
+		expected      map[string]bool
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:      "Success - no members",
+			groupRole: "testgroup",
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
+			},
+			expected:    map[string]bool{},
+			expectError: false,
+		},
+		{
+			name:      "Success - multiple members",
+			groupRole: "testgroup",
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(sqlmock.NewRows([]string{"rolname"}).
+						AddRow("member1").
+						AddRow("member2").
+						AddRow("member3"))
+			},
+			expected: map[string]bool{
+				"member1": true,
+				"member2": true,
+				"member3": true,
+			},
+			expectError: false,
+		},
+		{
+			name:      "Query error",
+			groupRole: "testgroup",
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnError(errors.New("query error"))
+			},
+			expectError:   true,
+			errorContains: "postgresql operation failed",
+		},
+		{
+			name:      "Scan error",
+			groupRole: "testgroup",
+			setupMock: func(m sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"rolname"}).
+					AddRow("member1").
+					RowError(0, errors.New("scan error"))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(rows)
+			},
+			expectError:   true,
+			errorContains: "error iterating members",
+		},
+		{
+			name:      "Rows close error",
+			groupRole: "testgroup",
+			setupMock: func(m sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"rolname"}).
+					AddRow("member1").
+					CloseError(errors.New("close error"))
+				m.ExpectQuery("SELECT r.rolname").
+					WithArgs("testgroup").
+					WillReturnRows(rows)
+			},
+			expectError:   true,
+			errorContains: "error iterating members",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+			tt.setupMock(mock)
+
+			result, err := getCurrentMembers(ctx, db, tt.groupRole)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestSyncRoleGroupMembers tests the syncRoleGroupMembers function directly
+func TestSyncRoleGroupMembers(t *testing.T) {
+	tests := []struct {
+		name             string
+		escapedGroupRole string
+		currentMembers   map[string]bool
+		memberRoles      []string
+		setupMock        func(sqlmock.Sqlmock)
+		expectError      bool
+		errorContains    string
+	}{
+		{
+			name:             "Add new member - member exists",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{},
+			memberRoles:      []string{"newmember"},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("newmember").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:             "Add new member - member does not exist, skip",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{},
+			memberRoles:      []string{"nonexistent"},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("nonexistent").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+			},
+			expectError: false,
+		},
+		{
+			name:             "Member already in group - skip",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{"existingmember": true},
+			memberRoles:      []string{"existingmember"},
+			expectError:      false,
+		},
+		{
+			name:             "Remove member not in desired",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{"oldmember": true},
+			memberRoles:      []string{},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("REVOKE").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+		{
+			name:             "Keep member that is in both current and desired",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{"keepmember": true},
+			memberRoles:      []string{"keepmember"},
+			expectError:      false,
+		},
+		{
+			name:             "Check member exists error",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{},
+			memberRoles:      []string{"member1"},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("member1").
+					WillReturnError(errors.New("check error"))
+			},
+			expectError:   true,
+			errorContains: "postgresql operation failed",
+		},
+		{
+			name:             "Grant error",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{},
+			memberRoles:      []string{"member1"},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("member1").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnError(errors.New("grant error"))
+			},
+			expectError:   true,
+			errorContains: "postgresql operation failed",
+		},
+		{
+			name:             "Revoke error",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{"oldmember": true},
+			memberRoles:      []string{},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectExec("REVOKE").
+					WillReturnError(errors.New("revoke error"))
+			},
+			expectError:   true,
+			errorContains: "failed to remove member",
+		},
+		{
+			name:             "Add multiple members - mixed existence",
+			escapedGroupRole: `"testgroup"`,
+			currentMembers:   map[string]bool{},
+			memberRoles:      []string{"exists1", "notexists", "exists2"},
+			setupMock: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("exists1").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("notexists").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+				m.ExpectQuery("SELECT EXISTS").
+					WithArgs("exists2").
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+				m.ExpectExec("GRANT").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			ctx := context.Background()
+			if tt.setupMock != nil {
+				tt.setupMock(mock)
+			}
+
+			err = syncRoleGroupMembers(ctx, db, tt.escapedGroupRole, tt.currentMembers, tt.memberRoles)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+// TestEscapeGrantFields tests the escapeGrantFields function
+func TestEscapeGrantFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		grant    instancev1alpha1.GrantItem
+		expected grantIdentifiers
+	}{
+		{
+			name: "All fields set",
+			grant: instancev1alpha1.GrantItem{
+				Schema:   "myschema",
+				Table:    "mytable",
+				Sequence: "myseq",
+				Function: "myfunc",
+			},
+			expected: grantIdentifiers{
+				Schema:   `"myschema"`,
+				Table:    `"mytable"`,
+				Sequence: `"myseq"`,
+				Function: `"myfunc"`,
+			},
+		},
+		{
+			name:     "No fields set",
+			grant:    instancev1alpha1.GrantItem{},
+			expected: grantIdentifiers{},
+		},
+		{
+			name: "Only schema set",
+			grant: instancev1alpha1.GrantItem{
+				Schema: "public",
+			},
+			expected: grantIdentifiers{
+				Schema: `"public"`,
+			},
+		},
+		{
+			name: "Schema and table set",
+			grant: instancev1alpha1.GrantItem{
+				Schema: "public",
+				Table:  "users",
+			},
+			expected: grantIdentifiers{
+				Schema: `"public"`,
+				Table:  `"users"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := escapeGrantFields(tt.grant)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestBuildGrantQuery tests the buildGrantQuery function
+func TestBuildGrantQuery(t *testing.T) {
+	tests := []struct {
+		name          string
+		grant         instancev1alpha1.GrantItem
+		privilegesStr string
+		escapedRole   string
+		ids           grantIdentifiers
+		expectedQuery string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "Schema grant",
+			grant: instancev1alpha1.GrantItem{
+				Type:   instancev1alpha1.GrantTypeSchema,
+				Schema: "public",
+			},
+			privilegesStr: "USAGE, CREATE",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Schema: `"public"`},
+			expectedQuery: `GRANT USAGE, CREATE ON SCHEMA "public" TO "testrole"`,
+			expectError:   false,
+		},
+		{
+			name: "Table grant",
+			grant: instancev1alpha1.GrantItem{
+				Type:   instancev1alpha1.GrantTypeTable,
+				Schema: "public",
+				Table:  "users",
+			},
+			privilegesStr: "SELECT, INSERT",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Schema: `"public"`, Table: `"users"`},
+			expectedQuery: `GRANT SELECT, INSERT ON TABLE "public"."users" TO "testrole"`,
+			expectError:   false,
+		},
+		{
+			name: "Sequence grant",
+			grant: instancev1alpha1.GrantItem{
+				Type:     instancev1alpha1.GrantTypeSequence,
+				Schema:   "public",
+				Sequence: "myseq",
+			},
+			privilegesStr: "USAGE",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Schema: `"public"`, Sequence: `"myseq"`},
+			expectedQuery: `GRANT USAGE ON SEQUENCE "public"."myseq" TO "testrole"`,
+			expectError:   false,
+		},
+		{
+			name: "Function grant",
+			grant: instancev1alpha1.GrantItem{
+				Type:     instancev1alpha1.GrantTypeFunction,
+				Schema:   "public",
+				Function: "myfunc",
+			},
+			privilegesStr: "EXECUTE",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Schema: `"public"`, Function: `"myfunc"`},
+			expectedQuery: `GRANT EXECUTE ON FUNCTION "public"."myfunc" TO "testrole"`,
+			expectError:   false,
+		},
+		{
+			name: "All tables grant",
+			grant: instancev1alpha1.GrantItem{
+				Type:   instancev1alpha1.GrantTypeAllTables,
+				Schema: "public",
+			},
+			privilegesStr: "SELECT",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Schema: `"public"`},
+			expectedQuery: `GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "testrole"`,
+			expectError:   false,
+		},
+		{
+			name: "All sequences grant",
+			grant: instancev1alpha1.GrantItem{
+				Type:   instancev1alpha1.GrantTypeAllSequences,
+				Schema: "public",
+			},
+			privilegesStr: "USAGE",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Schema: `"public"`},
+			expectedQuery: `GRANT USAGE ON ALL SEQUENCES IN SCHEMA "public" TO "testrole"`,
+			expectError:   false,
+		},
+		{
+			name: "Schema grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type: instancev1alpha1.GrantTypeSchema,
+			},
+			privilegesStr: "USAGE",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "Table grant - missing schema",
+			grant: instancev1alpha1.GrantItem{
+				Type:  instancev1alpha1.GrantTypeTable,
+				Table: "users",
+			},
+			privilegesStr: "SELECT",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Table: `"users"`},
+			expectError:   true,
+			errorContains: "schema is required",
+		},
+		{
+			name: "Table grant - missing table",
+			grant: instancev1alpha1.GrantItem{
+				Type:   instancev1alpha1.GrantTypeTable,
+				Schema: "public",
+			},
+			privilegesStr: "SELECT",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{Schema: `"public"`},
+			expectError:   true,
+			errorContains: "table is required",
+		},
+		{
+			name: "Unknown grant type",
+			grant: instancev1alpha1.GrantItem{
+				Type: "unknown",
+			},
+			privilegesStr: "SELECT",
+			escapedRole:   `"testrole"`,
+			ids:           grantIdentifiers{},
+			expectError:   true,
+			errorContains: "unknown grant type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query, err := buildGrantQuery(tt.grant, tt.privilegesStr, tt.escapedRole, tt.ids)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedQuery, query)
+			}
+		})
+	}
+}
+
+// TestRequireFields tests the requireFields function
+func TestRequireFields(t *testing.T) {
+	tests := []struct {
+		name          string
+		schemaVal     string
+		schemaName    string
+		fieldVal      string
+		fieldName     string
+		grantType     string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:        "Both fields present",
+			schemaVal:   "public",
+			schemaName:  "schema",
+			fieldVal:    "users",
+			fieldName:   "table",
+			grantType:   "table",
+			expectError: false,
+		},
+		{
+			name:          "Schema missing",
+			schemaVal:     "",
+			schemaName:    "schema",
+			fieldVal:      "users",
+			fieldName:     "table",
+			grantType:     "table",
+			expectError:   true,
+			errorContains: "schema is required for table grant type",
+		},
+		{
+			name:          "Field missing",
+			schemaVal:     "public",
+			schemaName:    "schema",
+			fieldVal:      "",
+			fieldName:     "table",
+			grantType:     "table",
+			expectError:   true,
+			errorContains: "table is required for table grant type",
+		},
+		{
+			name:          "Both missing - schema error first",
+			schemaVal:     "",
+			schemaName:    "schema",
+			fieldVal:      "",
+			fieldName:     "sequence",
+			grantType:     "sequence",
+			expectError:   true,
+			errorContains: "schema is required for sequence grant type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := requireFields(tt.schemaVal, tt.schemaName, tt.fieldVal, tt.fieldName, tt.grantType)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestApplyGrants_EmptyGrants tests ApplyGrants with no grants
+func TestApplyGrants_EmptyGrants(t *testing.T) {
+	ctx := context.Background()
+	err := ApplyGrants(ctx, "localhost", 5432, "admin", "password", "disable",
+		"testdb", "testrole", nil, nil)
+	assert.NoError(t, err)
+}
+
+// TestCreateOrUpdateDatabase_InvalidConnection tests with invalid connection
+func TestCreateOrUpdateDatabase_InvalidConnection(t *testing.T) {
+	ctx := context.Background()
+	err := CreateOrUpdateDatabase(ctx, "invalid-host", 5432, "admin", "password", "disable",
+		"testdb", "testowner", "", "")
+	assert.Error(t, err)
+}
+
+// TestCreateOrUpdateUser_InvalidConnection tests with invalid connection
+func TestCreateOrUpdateUser_InvalidConnection(t *testing.T) {
+	ctx := context.Background()
+	err := CreateOrUpdateUser(ctx, "invalid-host", 5432, "admin", "password", "disable",
+		"testuser", "testpass")
+	assert.Error(t, err)
+}
+
+// TestCreateOrUpdateRoleGroup_InvalidConnection tests with invalid connection
+func TestCreateOrUpdateRoleGroup_InvalidConnection(t *testing.T) {
+	ctx := context.Background()
+	err := CreateOrUpdateRoleGroup(ctx, "invalid-host", 5432, "admin", "password", "disable",
+		"testgroup", []string{"member1"})
+	assert.Error(t, err)
+}
+
+// TestCreateOrUpdateSchema_InvalidConnection tests with invalid connection
+func TestCreateOrUpdateSchema_InvalidConnection(t *testing.T) {
+	ctx := context.Background()
+	err := CreateOrUpdateSchema(ctx, "invalid-host", 5432, "admin", "password", "disable",
+		"testdb", "testschema", "testowner")
+	assert.Error(t, err)
+}
+
+// TestApplyGrants_InvalidConnection_DatabaseGrants tests with invalid connection for database grants
+func TestApplyGrants_InvalidConnection_DatabaseGrants(t *testing.T) {
+	ctx := context.Background()
+	grants := []instancev1alpha1.GrantItem{
+		{
+			Type:       instancev1alpha1.GrantTypeDatabase,
+			Privileges: []string{"CONNECT"},
+		},
+	}
+	err := ApplyGrants(ctx, "invalid-host", 5432, "admin", "password", "disable",
+		"testdb", "testrole", grants, nil)
+	assert.Error(t, err)
+}
+
+// TestApplyGrants_InvalidConnection_OtherGrants tests with invalid connection for non-database grants
+func TestApplyGrants_InvalidConnection_OtherGrants(t *testing.T) {
+	ctx := context.Background()
+	grants := []instancev1alpha1.GrantItem{
+		{
+			Type:       instancev1alpha1.GrantTypeSchema,
+			Schema:     "public",
+			Privileges: []string{"USAGE"},
+		},
+	}
+	err := ApplyGrants(ctx, "invalid-host", 5432, "admin", "password", "disable",
+		"testdb", "testrole", grants, nil)
+	assert.Error(t, err)
+}
+
+// TestApplyGrants_InvalidConnection_DefaultPrivileges tests with invalid connection for default privileges
+func TestApplyGrants_InvalidConnection_DefaultPrivileges(t *testing.T) {
+	ctx := context.Background()
+	defaultPrivs := []instancev1alpha1.DefaultPrivilegeItem{
+		{
+			Schema:     "public",
+			ObjectType: "tables",
+			Privileges: []string{"SELECT"},
+		},
+	}
+	err := ApplyGrants(ctx, "invalid-host", 5432, "admin", "password", "disable",
+		"testdb", "testrole", nil, defaultPrivs)
+	assert.Error(t, err)
+}
+
+// ============================================================================
+// Tests using mock PostgreSQL server to cover actual source functions
+// ============================================================================
+
+// TestCreateOrUpdateDatabase_MockPG tests CreateOrUpdateDatabase with mock PG server
+func TestCreateOrUpdateDatabase_MockPG(t *testing.T) {
+	tests := []struct {
+		name         string
+		databaseName string
+		owner        string
+		schemaName   string
+		templateDB   string
+		handler      func(query string) mockPGResponse
+		expectError  bool
+	}{
+		{
+			name:         "Database exists - update owner",
+			databaseName: "testdb",
+			owner:        "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				// ALTER DATABASE
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:         "Database does not exist - create new",
+			databaseName: "testdb",
+			owner:        "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				// CREATE DATABASE
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:         "Database does not exist - create with template",
+			databaseName: "testdb",
+			owner:        "testowner",
+			templateDB:   "template1",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:         "Database does not exist - create with public schema (skip)",
+			databaseName: "testdb",
+			owner:        "testowner",
+			schemaName:   "public",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:         "Database does not exist - create with empty schema (skip)",
+			databaseName: "testdb",
+			owner:        "testowner",
+			schemaName:   "",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:         "Database does not exist - create with custom schema that exists",
+			databaseName: "testdb",
+			owner:        "testowner",
+			schemaName:   "myschema",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") && strings.Contains(upper, "PG_DATABASE") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				if strings.Contains(upper, "SELECT EXISTS") && strings.Contains(upper, "INFORMATION_SCHEMA") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:         "Database does not exist - create with custom schema that does not exist",
+			databaseName: "testdb",
+			owner:        "testowner",
+			schemaName:   "myschema",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") && strings.Contains(upper, "PG_DATABASE") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				if strings.Contains(upper, "SELECT EXISTS") && strings.Contains(upper, "INFORMATION_SCHEMA") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:         "Check database exists error",
+			databaseName: "testdb",
+			owner:        "testowner",
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isError: true, errorMsg: "query error"}
+			},
+			expectError: true,
+		},
+		{
+			name:         "Update owner error",
+			databaseName: "testdb",
+			owner:        "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				return mockPGResponse{isError: true, errorMsg: "alter error"}
+			},
+			expectError: true,
+		},
+		{
+			name:         "Create database error",
+			databaseName: "testdb",
+			owner:        "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isError: true, errorMsg: "create error"}
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newMockPGServer(t, tt.handler)
+			defer srv.close()
+
+			ctx := context.Background()
+			err := CreateOrUpdateDatabase(ctx, "127.0.0.1", srv.port(), "admin", "password", "disable",
+				tt.databaseName, tt.owner, tt.schemaName, tt.templateDB)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestCreateOrUpdateUser_MockPG tests CreateOrUpdateUser with mock PG server
+func TestCreateOrUpdateUser_MockPG(t *testing.T) {
+	tests := []struct {
+		name        string
+		username    string
+		password    string
+		handler     func(query string) mockPGResponse
+		expectError bool
+	}{
+		{
+			name:     "User exists - update password",
+			username: "testuser",
+			password: "newpass",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:     "User does not exist - create new",
+			username: "testuser",
+			password: "testpass",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:     "Check user exists error",
+			username: "testuser",
+			password: "testpass",
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isError: true, errorMsg: "query error"}
+			},
+			expectError: true,
+		},
+		{
+			name:     "Update password error",
+			username: "testuser",
+			password: "newpass",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				return mockPGResponse{isError: true, errorMsg: "alter error"}
+			},
+			expectError: true,
+		},
+		{
+			name:     "Create user error",
+			username: "testuser",
+			password: "testpass",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isError: true, errorMsg: "create error"}
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newMockPGServer(t, tt.handler)
+			defer srv.close()
+
+			ctx := context.Background()
+			err := CreateOrUpdateUser(ctx, "127.0.0.1", srv.port(), "admin", "password", "disable",
+				tt.username, tt.password)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestCreateOrUpdateRoleGroup_MockPG tests CreateOrUpdateRoleGroup with mock PG server
+func TestCreateOrUpdateRoleGroup_MockPG(t *testing.T) {
+	tests := []struct {
+		name        string
+		groupRole   string
+		memberRoles []string
+		handler     func(query string) mockPGResponse
+		expectError bool
+	}{
+		{
+			name:        "Group exists - no members to add",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				if strings.Contains(upper, "SELECT R.ROLNAME") {
+					// Return empty result (no current members)
+					return mockPGResponse{isSelect: true, value: ""}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:        "Group does not exist - create",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") && strings.Contains(upper, "PG_ROLES") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				if strings.Contains(upper, "SELECT R.ROLNAME") {
+					return mockPGResponse{isSelect: true, value: ""}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:        "Check group exists error",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isError: true, errorMsg: "query error"}
+			},
+			expectError: true,
+		},
+		{
+			name:        "Create group error",
+			groupRole:   "testgroup",
+			memberRoles: []string{},
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isError: true, errorMsg: "create error"}
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newMockPGServer(t, tt.handler)
+			defer srv.close()
+
+			ctx := context.Background()
+			err := CreateOrUpdateRoleGroup(ctx, "127.0.0.1", srv.port(), "admin", "password", "disable",
+				tt.groupRole, tt.memberRoles)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestCreateOrUpdateSchema_MockPG tests CreateOrUpdateSchema with mock PG server
+func TestCreateOrUpdateSchema_MockPG(t *testing.T) {
+	tests := []struct {
+		name        string
+		schemaName  string
+		owner       string
+		handler     func(query string) mockPGResponse
+		expectError bool
+	}{
+		{
+			name:       "Schema exists - update owner",
+			schemaName: "testschema",
+			owner:      "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:       "Schema does not exist - create new",
+			schemaName: "testschema",
+			owner:      "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name:       "Check schema exists error",
+			schemaName: "testschema",
+			owner:      "testowner",
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isError: true, errorMsg: "query error"}
+			},
+			expectError: true,
+		},
+		{
+			name:       "Update schema owner error",
+			schemaName: "testschema",
+			owner:      "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "t"}
+				}
+				return mockPGResponse{isError: true, errorMsg: "alter error"}
+			},
+			expectError: true,
+		},
+		{
+			name:       "Create schema error",
+			schemaName: "testschema",
+			owner:      "testowner",
+			handler: func(q string) mockPGResponse {
+				upper := strings.ToUpper(q)
+				if strings.Contains(upper, "SELECT EXISTS") {
+					return mockPGResponse{isSelect: true, value: "f"}
+				}
+				return mockPGResponse{isError: true, errorMsg: "create error"}
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newMockPGServer(t, tt.handler)
+			defer srv.close()
+
+			ctx := context.Background()
+			err := CreateOrUpdateSchema(ctx, "127.0.0.1", srv.port(), "admin", "password", "disable",
+				"testdb", tt.schemaName, tt.owner)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestApplyGrants_MockPG tests ApplyGrants with mock PG server
+func TestApplyGrants_MockPG(t *testing.T) {
+	tests := []struct {
+		name         string
+		grants       []instancev1alpha1.GrantItem
+		defaultPrivs []instancev1alpha1.DefaultPrivilegeItem
+		handler      func(query string) mockPGResponse
+		expectError  bool
+	}{
+		{
+			name: "Database grants - success",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeDatabase,
+					Privileges: []string{"CONNECT", "CREATE"},
+				},
+			},
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name: "Schema grants - success",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeSchema,
+					Schema:     "public",
+					Privileges: []string{"USAGE"},
+				},
+			},
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name: "Default privileges - success",
+			defaultPrivs: []instancev1alpha1.DefaultPrivilegeItem{
+				{
+					Schema:     "public",
+					ObjectType: "tables",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name: "Mixed grants - success",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeDatabase,
+					Privileges: []string{"CONNECT"},
+				},
+				{
+					Type:       instancev1alpha1.GrantTypeTable,
+					Schema:     "public",
+					Table:      "users",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			defaultPrivs: []instancev1alpha1.DefaultPrivilegeItem{
+				{
+					Schema:     "public",
+					ObjectType: "tables",
+					Privileges: []string{"SELECT"},
+				},
+			},
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isSelect: false}
+			},
+			expectError: false,
+		},
+		{
+			name: "Database grant error",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeDatabase,
+					Privileges: []string{"CONNECT"},
+				},
+			},
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isError: true, errorMsg: "grant error"}
+			},
+			expectError: true,
+		},
+		{
+			name: "Schema grant error",
+			grants: []instancev1alpha1.GrantItem{
+				{
+					Type:       instancev1alpha1.GrantTypeSchema,
+					Schema:     "public",
+					Privileges: []string{"USAGE"},
+				},
+			},
+			handler: func(q string) mockPGResponse {
+				return mockPGResponse{isError: true, errorMsg: "grant error"}
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newMockPGServer(t, tt.handler)
+			defer srv.close()
+
+			ctx := context.Background()
+			err := ApplyGrants(ctx, "127.0.0.1", srv.port(), "admin", "password", "disable",
+				"testdb", "testrole", tt.grants, tt.defaultPrivs)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }

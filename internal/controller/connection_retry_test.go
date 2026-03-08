@@ -61,5 +61,55 @@ func TestStoreVaultUserCredentialsWithRetry_NilClient(t *testing.T) {
 	assert.Contains(t, err.Error(), "vault client is not configured")
 }
 
+func TestGetDefaultVaultCredentialsWithRetry_NilClient_Unit(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	login, password, err := getDefaultVaultCredentialsWithRetry(
+		ctx, nil, logger, 3, 100*time.Millisecond)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "vault client is not configured")
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestStoreVaultCredentialsWithRetry_NilClient_Unit(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	err := storeVaultCredentialsWithRetry(
+		ctx, nil, "test-id", "admin", "pass",
+		logger, 3, 100*time.Millisecond)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "vault client is not configured")
+}
+
+func TestGetInstanceAdminNewPasswordWithRetry_NilClient_Unit(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	password, err := getInstanceAdminNewPasswordWithRetry(
+		ctx, nil, "test-id",
+		logger, 3, 100*time.Millisecond)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "vault client is not configured")
+	assert.Empty(t, password)
+}
+
+func TestRotateInstanceAdminPasswordWithRetry_NilClient_Unit(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	err := rotateInstanceAdminPasswordWithRetry(
+		ctx, nil, "test-id", "newpass",
+		logger, 3, 100*time.Millisecond)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "vault client is not configured")
+}
+
 // Note: Full retry testing with actual vault.Client requires integration tests
 // or refactoring the functions to accept an interface instead of *vault.Client

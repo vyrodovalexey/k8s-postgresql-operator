@@ -61,7 +61,8 @@ func CheckDuplicatePostgresqlID(
 				Fields: map[string]string{
 					"postgresqlID": postgresqlID,
 				},
-				Message: fmt.Sprintf("PostgreSQL instance with postgresqlID %s already exists in namespace %s (instance: %s)",
+				Message: fmt.Sprintf(
+					"PostgreSQL instance with postgresqlID %s already exists in namespace %s (instance: %s)",
 					postgresqlID, existing.Namespace, existing.Name),
 			}, nil
 		}
@@ -97,7 +98,8 @@ func CheckDuplicateUser(
 					"postgresqlID": postgresqlID,
 					"username":     username,
 				},
-				Message: fmt.Sprintf("User with postgresqlID %s and username %s already exists in namespace %s (instance: %s)",
+				Message: fmt.Sprintf(
+					"User with postgresqlID %s and username %s already exists in namespace %s (instance: %s)",
 					postgresqlID, username, existing.Namespace, existing.Name),
 			}, nil
 		}
@@ -145,8 +147,10 @@ func CheckDuplicateDatabase(
 
 // CheckDuplicateGrant checks for duplicate postgresqlID + role + database combination in Grant resources
 func CheckDuplicateGrant(
-	ctx context.Context, k8sClient client.Client, currentName, currentNamespace, postgresqlID, role, databaseName string,
-	isUpdate bool) (*DuplicateCheckResult, error) {
+	ctx context.Context, k8sClient client.Client,
+	currentName, currentNamespace, postgresqlID, role, databaseName string,
+	isUpdate bool,
+) (*DuplicateCheckResult, error) {
 	grantList := &instancev1alpha1.GrantList{}
 	if err := k8sClient.List(ctx, grantList); err != nil {
 		return nil, fmt.Errorf("failed to list Grant instances: %w", err)
@@ -173,8 +177,10 @@ func CheckDuplicateGrant(
 					"database":     databaseName,
 				},
 				Message: fmt.Sprintf(
-					"Grant with postgresqlID %s, role %s, and database %s already exists in namespace %s (instance: %s)",
-					postgresqlID, role, databaseName, existing.Namespace, existing.Name),
+					"Grant with postgresqlID %s, role %s, and database %s "+
+						"already exists in namespace %s (instance: %s)",
+					postgresqlID, role, databaseName,
+					existing.Namespace, existing.Name),
 			}, nil
 		}
 	}
@@ -246,7 +252,8 @@ func CheckDuplicateSchema(
 					"postgresqlID": postgresqlID,
 					"schema":       schemaName,
 				},
-				Message: fmt.Sprintf("Schema with postgresqlID %s and schema %s already exists in namespace %s (instance: %s)",
+				Message: fmt.Sprintf(
+					"Schema with postgresqlID %s and schema %s already exists in namespace %s (instance: %s)",
 					postgresqlID, schemaName, existing.Namespace, existing.Name),
 			}, nil
 		}

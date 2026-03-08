@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,19 @@ type DatabaseValidator struct {
 }
 
 // Handle handles the admission request for Database resources
-func (v *DatabaseValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *DatabaseValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"DatabaseValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "database"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var database instancev1alpha1.Database
 
 	if err := v.Decoder.Decode(req, &database); err != nil {
@@ -44,10 +59,10 @@ func (v *DatabaseValidator) Handle(ctx context.Context, req admission.Request) a
 
 	// Check if postgresqlID and database name are specified
 	if database.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if database.Spec.Database == "" {
-		return admission.Allowed("No database name specified")
+		return admission.Denied("database name is required")
 	}
 
 	postgresqlID := database.Spec.PostgresqlID
@@ -94,8 +109,10 @@ func (v *DatabaseValidator) Handle(ctx context.Context, req admission.Request) a
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "database", databaseName,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "database", databaseName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

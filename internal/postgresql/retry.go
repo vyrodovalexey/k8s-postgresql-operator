@@ -18,28 +18,73 @@ package postgresql
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"math"
+	"math/big"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 )
+
+// maxRetryDelay is the upper bound for exponential backoff delay
+const maxRetryDelay = 60 * time.Second
+
+// calculateBackoff returns the delay for the given attempt using exponential backoff with jitter
+func calculateBackoff(baseDelay time.Duration, attempt int, maxDelay time.Duration) time.Duration {
+	exp := math.Pow(2, float64(attempt-1))
+	delay := time.Duration(float64(baseDelay) * exp)
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	// Add jitter: 0-25% of the delay
+	maxJitter := int64(delay/4) + 1
+	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
+	if err != nil {
+		return delay
+	}
+	jitter := time.Duration(n.Int64())
+	return delay + jitter
+}
 
 // ExecuteOperationWithRetry executes a PostgreSQL operation with retry logic
 func ExecuteOperationWithRetry(
-	ctx context.Context, operation func() error, log *zap.SugaredLogger,
-	retries int, retryDelay time.Duration, operationName string) error {
+	ctx context.Context, operation func() error,
+	log *zap.SugaredLogger,
+	retries int, retryDelay time.Duration,
+	operationName string,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.ExecuteOperationWithRetry",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation, operationName),
+			attribute.Int("retry.max_attempts", retries),
+		))
+	defer span.End()
+	_ = ctx // ctx is used for span propagation
 	var lastErr error
 	for attempt := 1; attempt <= retries; attempt++ {
-		log.Debugw("Attempting PostgreSQL operation", "operation", operationName, "attempt", attempt, "maxRetries", retries)
+		log.Debugw("Attempting PostgreSQL operation",
+			"operation", operationName, "attempt", attempt, "maxRetries", retries)
 
 		err := operation()
 		if err != nil {
 			lastErr = err
 			log.Warnw("PostgreSQL operation failed", "operation", operationName, "attempt", attempt, "error", err)
 			if attempt < retries {
+				delay := calculateBackoff(retryDelay, attempt, maxRetryDelay)
 				log.Debugw("Retrying PostgreSQL operation",
-					"operation", operationName, "attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
-				time.Sleep(retryDelay)
+					"operation", operationName, "attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return fmt.Errorf("operation %s canceled: %w", operationName, ctx.Err())
+				}
 			}
 			continue
 		}
@@ -50,5 +95,9 @@ func ExecuteOperationWithRetry(
 	}
 
 	// All retries failed
-	return fmt.Errorf("postgreSQL operation %s failed after %d attempts: %w", operationName, retries, lastErr)
+	retryErr := fmt.Errorf(
+		"postgreSQL operation %s failed after %d attempts: %w",
+		operationName, retries, lastErr)
+	telemetry.RecordError(span, retryErr)
+	return retryErr
 }

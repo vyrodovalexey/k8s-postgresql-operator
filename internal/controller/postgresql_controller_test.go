@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -173,6 +174,7 @@ func TestPostgresqlReconciler_Reconcile_NotFound(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -204,6 +206,7 @@ func TestPostgresqlReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -300,6 +303,7 @@ func TestPostgresqlReconciler_Reconcile_GetError(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -333,10 +337,11 @@ func TestPostgresqlReconciler_Reconcile_WithExternalInstance(t *testing.T) {
 			Client:                      mockClient,
 			VaultClient:                 nil, // No vault client for this test
 			Log:                         logger,
-			PostgresqlConnectionRetries: 3,
-			PostgresqlConnectionTimeout: 10 * time.Second,
-			VaultAvailabilityRetries:    3,
-			VaultAvailabilityRetryDelay: 10 * time.Second,
+			Recorder:                    record.NewFakeRecorder(100),
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Millisecond,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
 		},
 	}
 

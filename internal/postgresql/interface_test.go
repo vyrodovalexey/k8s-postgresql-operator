@@ -135,6 +135,42 @@ func TestDefaultClient_TestConnection(t *testing.T) {
 	assert.False(t, connected)
 }
 
+func TestDefaultClient_TestConnectionFromPostgresql_NoExternalInstance(t *testing.T) {
+	client := NewDefaultClient()
+	logger := zap.NewNop().Sugar()
+
+	ctx := context.Background()
+	postgresql := &instancev1alpha1.Postgresql{
+		Spec: instancev1alpha1.PostgresqlSpec{
+			ExternalInstance: nil,
+		},
+	}
+
+	err := client.TestConnectionFromPostgresql(ctx, postgresql, nil, logger, 1, 1*time.Second)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no external instance configuration")
+}
+
+func TestDefaultClient_TestConnectionFromPostgresql_NoVaultClient(t *testing.T) {
+	client := NewDefaultClient()
+	logger := zap.NewNop().Sugar()
+
+	ctx := context.Background()
+	postgresql := &instancev1alpha1.Postgresql{
+		Spec: instancev1alpha1.PostgresqlSpec{
+			ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+				PostgresqlID: "test-id",
+				Address:      "localhost",
+				Port:         5432,
+			},
+		},
+	}
+
+	// Should return nil when vault client is not configured (skips test)
+	err := client.TestConnectionFromPostgresql(ctx, postgresql, nil, logger, 1, 1*time.Second)
+	assert.NoError(t, err)
+}
+
 func TestDefaultClient_ExecuteOperationWithRetry(t *testing.T) {
 	client := NewDefaultClient()
 	logger := zap.NewNop().Sugar()

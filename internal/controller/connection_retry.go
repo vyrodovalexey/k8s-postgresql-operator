@@ -18,13 +18,37 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"math"
+	"math/big"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
+
+// maxVaultRetryDelay is the upper bound for exponential backoff delay in vault retry functions
+const maxVaultRetryDelay = 60 * time.Second
+
+// calculateVaultBackoff returns the delay for the given attempt using exponential backoff with jitter.
+// The delay is capped at maxVaultRetryDelay.
+func calculateVaultBackoff(baseDelay time.Duration, attempt int) time.Duration {
+	exp := math.Pow(2, float64(attempt-1))
+	delay := time.Duration(float64(baseDelay) * exp)
+	if delay > maxVaultRetryDelay {
+		delay = maxVaultRetryDelay
+	}
+	// Add jitter: 0-25% of the delay
+	maxJitter := int64(delay/4) + 1
+	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
+	if err != nil {
+		return delay
+	}
+	jitter := time.Duration(n.Int64())
+	return delay + jitter
+}
 
 // getVaultCredentialsWithRetry retrieves PostgreSQL credentials from Vault with retry logic
 func getVaultCredentialsWithRetry(
@@ -41,13 +65,22 @@ func getVaultCredentialsWithRetry(
 
 		username, password, err := vaultClient.GetPostgresqlCredentials(ctx, postgresqlID)
 		if err != nil {
+			// Secret not found is not a transient error - don't retry
+			if vault.IsSecretNotFound(err) {
+				return "", "", err
+			}
 			lastErr = err
 			log.Warnw("Failed to get credentials from Vault",
 				"postgresqlID", postgresqlID, "attempt", attempt, "error", err)
 			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt)
 				log.Debugw("Retrying Vault credentials retrieval",
-					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
-				time.Sleep(retryDelay)
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return "", "", fmt.Errorf("vault credentials retrieval canceled: %w", ctx.Err())
+				}
 			}
 			continue
 		}
@@ -59,6 +92,185 @@ func getVaultCredentialsWithRetry(
 
 	// All retries failed
 	return "", "", fmt.Errorf("failed to get credentials from Vault after %d attempts: %w", retries, lastErr)
+}
+
+// getDefaultVaultCredentialsWithRetry retrieves default PostgreSQL credentials from Vault with retry logic
+func getDefaultVaultCredentialsWithRetry(
+	ctx context.Context, vaultClient *vault.Client,
+	log *zap.SugaredLogger, retries int, retryDelay time.Duration,
+) (login, password string, err error) {
+	if vaultClient == nil {
+		return "", "", fmt.Errorf("vault client is not configured")
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		log.Debugw("Attempting to get default credentials from Vault",
+			"attempt", attempt, "maxRetries", retries)
+
+		login, password, err := vaultClient.GetDefaultCredentials(ctx)
+		if err != nil {
+			// Secret not found is not a transient error - don't retry
+			if vault.IsSecretNotFound(err) {
+				return "", "", err
+			}
+			lastErr = err
+			log.Warnw("Failed to get default credentials from Vault",
+				"attempt", attempt, "error", err)
+			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt)
+				log.Debugw("Retrying Vault default credentials retrieval",
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return "", "", fmt.Errorf("vault default credentials retrieval canceled: %w", ctx.Err())
+				}
+			}
+			continue
+		}
+
+		// Success!
+		log.Debugw("Default credentials retrieved from Vault", "attempt", attempt)
+		return login, password, nil
+	}
+
+	// All retries failed
+	return "", "", fmt.Errorf("failed to get default credentials from Vault after %d attempts: %w", retries, lastErr)
+}
+
+// storeVaultCredentialsWithRetry stores PostgreSQL instance admin credentials in Vault with retry logic
+func storeVaultCredentialsWithRetry(
+	ctx context.Context, vaultClient *vault.Client,
+	postgresqlID, login, password string,
+	log *zap.SugaredLogger, retries int, retryDelay time.Duration,
+) error {
+	if vaultClient == nil {
+		return fmt.Errorf("vault client is not configured")
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		log.Debugw("Attempting to store instance admin credentials in Vault",
+			"postgresqlID", postgresqlID, "attempt", attempt, "maxRetries", retries)
+
+		err := vaultClient.StorePostgresqlCredentials(ctx, postgresqlID, login, password)
+		if err != nil {
+			lastErr = err
+			log.Warnw("Failed to store instance admin credentials in Vault",
+				"postgresqlID", postgresqlID, "attempt", attempt, "error", err)
+			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt)
+				log.Debugw("Retrying Vault instance admin credentials storage",
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return fmt.Errorf("vault instance admin credentials storage canceled: %w", ctx.Err())
+				}
+			}
+			continue
+		}
+
+		// Success!
+		log.Debugw("Instance admin credentials stored in Vault",
+			"postgresqlID", postgresqlID, "attempt", attempt)
+		return nil
+	}
+
+	// All retries failed
+	return fmt.Errorf("failed to store instance admin credentials in Vault after %d attempts: %w", retries, lastErr)
+}
+
+// getInstanceAdminNewPasswordWithRetry retrieves the new_password field from instance admin secret with retry logic
+func getInstanceAdminNewPasswordWithRetry(
+	ctx context.Context, vaultClient *vault.Client,
+	postgresqlID string,
+	log *zap.SugaredLogger, retries int, retryDelay time.Duration,
+) (string, error) {
+	if vaultClient == nil {
+		return "", fmt.Errorf("vault client is not configured")
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		log.Debugw("Attempting to get instance admin new password from Vault",
+			"postgresqlID", postgresqlID, "attempt", attempt, "maxRetries", retries)
+
+		newPassword, err := vaultClient.GetInstanceAdminNewPassword(ctx, postgresqlID)
+		if err != nil {
+			// Secret not found is not a transient error - don't retry
+			if vault.IsSecretNotFound(err) {
+				return "", err
+			}
+			lastErr = err
+			log.Warnw("Failed to get instance admin new password from Vault",
+				"postgresqlID", postgresqlID, "attempt", attempt, "error", err)
+			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt)
+				log.Debugw("Retrying Vault instance admin new password retrieval",
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return "", fmt.Errorf("vault instance admin new password retrieval canceled: %w", ctx.Err())
+				}
+			}
+			continue
+		}
+
+		// Success!
+		log.Debugw("Instance admin new password retrieved from Vault",
+			"postgresqlID", postgresqlID, "attempt", attempt)
+		return newPassword, nil
+	}
+
+	// All retries failed
+	return "", fmt.Errorf("failed to get instance admin new password from Vault after %d attempts: %w",
+		retries, lastErr)
+}
+
+// rotateInstanceAdminPasswordWithRetry rotates the instance admin password in Vault with retry logic
+func rotateInstanceAdminPasswordWithRetry(
+	ctx context.Context, vaultClient *vault.Client,
+	postgresqlID, newPassword string,
+	log *zap.SugaredLogger, retries int, retryDelay time.Duration,
+) error {
+	if vaultClient == nil {
+		return fmt.Errorf("vault client is not configured")
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		log.Debugw("Attempting to rotate instance admin password in Vault",
+			"postgresqlID", postgresqlID, "attempt", attempt, "maxRetries", retries)
+
+		err := vaultClient.RotateInstanceAdminPassword(ctx, postgresqlID, newPassword)
+		if err != nil {
+			lastErr = err
+			log.Warnw("Failed to rotate instance admin password in Vault",
+				"postgresqlID", postgresqlID, "attempt", attempt, "error", err)
+			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt)
+				log.Debugw("Retrying Vault instance admin password rotation",
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return fmt.Errorf("vault instance admin password rotation canceled: %w", ctx.Err())
+				}
+			}
+			continue
+		}
+
+		// Success!
+		log.Debugw("Instance admin password rotated in Vault",
+			"postgresqlID", postgresqlID, "attempt", attempt)
+		return nil
+	}
+
+	// All retries failed
+	return fmt.Errorf("failed to rotate instance admin password in Vault after %d attempts: %w", retries, lastErr)
 }
 
 // getVaultUserCredentialsWithRetry retrieves PostgreSQL user credentials from Vault with retry logic
@@ -80,9 +292,14 @@ func getVaultUserCredentialsWithRetry(
 			log.Warnw("Failed to get user credentials from Vault",
 				"postgresqlID", postgresqlID, "username", username, "attempt", attempt, "error", err)
 			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt)
 				log.Debugw("Retrying Vault user credentials retrieval",
-					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
-				time.Sleep(retryDelay)
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return "", fmt.Errorf("vault user credentials retrieval canceled: %w", ctx.Err())
+				}
 			}
 			continue
 		}
@@ -116,15 +333,21 @@ func storeVaultUserCredentialsWithRetry(
 			log.Warnw("Failed to store user credentials in Vault",
 				"postgresqlID", postgresqlID, "username", username, "attempt", attempt, "error", err)
 			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt)
 				log.Debugw("Retrying Vault user credentials storage",
-					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
-				time.Sleep(retryDelay)
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return fmt.Errorf("vault user credentials storage canceled: %w", ctx.Err())
+				}
 			}
 			continue
 		}
 
 		// Success!
-		log.Debugw("User credentials stored in Vault", "postgresqlID", postgresqlID, "username", username, "attempt", attempt)
+		log.Debugw("User credentials stored in Vault",
+			"postgresqlID", postgresqlID, "username", username, "attempt", attempt)
 		return nil
 	}
 

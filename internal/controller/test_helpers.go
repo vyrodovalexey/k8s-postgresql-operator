@@ -21,6 +21,7 @@ import (
 
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
@@ -35,10 +36,11 @@ func getBaseReconcilerConfig(mockClient client.Client, mockVaultClient *MockVaul
 		Client:                      mockClient,
 		VaultClient:                 nil, // Set to nil for unit tests - Vault operations are tested separately
 		Log:                         logger,
-		PostgresqlConnectionRetries: 3,
-		PostgresqlConnectionTimeout: 10 * time.Second,
-		VaultAvailabilityRetries:    3,
-		VaultAvailabilityRetryDelay: 10 * time.Second,
+		Recorder:                    record.NewFakeRecorder(100),
+		PostgresqlConnectionRetries: 1,
+		PostgresqlConnectionTimeout: 1 * time.Millisecond,
+		VaultAvailabilityRetries:    1,
+		VaultAvailabilityRetryDelay: 1 * time.Millisecond,
 	}
 }
 

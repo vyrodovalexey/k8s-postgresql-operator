@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,19 @@ type SchemaValidator struct {
 }
 
 // Handle handles the admission request for Schema resources
-func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *SchemaValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"SchemaValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "schema"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var schema instancev1alpha1.Schema
 
 	if err := v.Decoder.Decode(req, &schema); err != nil {
@@ -44,13 +59,13 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 
 	// Check if postgresqlID, schema, and owner are specified
 	if schema.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if schema.Spec.Schema == "" {
-		return admission.Allowed("No schema name specified")
+		return admission.Denied("schema name is required")
 	}
 	if schema.Spec.Owner == "" {
-		return admission.Allowed("No owner specified")
+		return admission.Denied("owner is required")
 	}
 
 	postgresqlID := schema.Spec.PostgresqlID
@@ -97,8 +112,10 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "schema", schemaName,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "schema", schemaName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

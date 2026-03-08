@@ -48,6 +48,11 @@ type UserStatus struct {
 	// Conditions represent the latest available observations of the User state
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// LastAppliedPasswordHash is the SHA-256 hash of the last password applied to PostgreSQL
+	// Used to detect external Vault password changes
+	// +optional
+	LastAppliedPasswordHash string `json:"lastAppliedPasswordHash,omitempty"`
 }
 
 // +kubebuilder:object:root=true

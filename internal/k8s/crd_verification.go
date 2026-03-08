@@ -44,7 +44,9 @@ func FindPostgresqlByID(
 
 // FindDatabaseByPostgresqlIDAndName finds a Database instance by PostgresqlID and database name across all namespaces
 func FindDatabaseByPostgresqlIDAndName(
-	ctx context.Context, k8sClient client.Client, postgresqlID, databaseName string) (*instancev1alpha1.Database, error) {
+	ctx context.Context, k8sClient client.Client,
+	postgresqlID, databaseName string,
+) (*instancev1alpha1.Database, error) {
 	databaseList := &instancev1alpha1.DatabaseList{}
 	if err := k8sClient.List(ctx, databaseList); err != nil {
 		return nil, fmt.Errorf("failed to list Database instances: %w", err)

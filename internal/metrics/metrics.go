@@ -17,6 +17,8 @@ limitations under the License.
 package metrics
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
@@ -47,6 +49,72 @@ var (
 		},
 		[]string{"kind", "postgresql_id", "name", "namespace", "databasename", "username"},
 	)
+
+	// ReconcileDuration is a histogram of reconciliation durations per controller
+	ReconcileDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "postgresql_operator_reconcile_duration_seconds",
+			Help:    "Duration of reconciliation per controller",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"controller"},
+	)
+
+	// ReconcileErrors is a counter of reconciliation errors per controller
+	ReconcileErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_reconcile_errors_total",
+			Help: "Total number of reconciliation errors per controller",
+		},
+		[]string{"controller"},
+	)
+
+	// ReconcileTotal is a counter of total reconciliations per controller
+	ReconcileTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_reconcile_total",
+			Help: "Total number of reconciliations per controller",
+		},
+		[]string{"controller"},
+	)
+
+	// VaultCredentialResolution tracks credential resolution outcomes
+	VaultCredentialResolution = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_vault_credential_resolution_total",
+			Help: "Total number of Vault credential resolution attempts by source",
+		},
+		[]string{"source"}, // "instance_admin", "default", "none"
+	)
+
+	// VaultPasswordRotation tracks password rotation outcomes
+	VaultPasswordRotation = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_vault_password_rotation_total",
+			Help: "Total number of password rotation attempts by result",
+		},
+		[]string{"result"}, // "success", "pg_failed", "vault_failed"
+	)
+
+	// CertificateExpirySeconds is the time in seconds until the webhook
+	// TLS certificate expires. Labels: source (vault_pki, self_signed).
+	CertificateExpirySeconds = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "postgresql_operator_certificate_expiry_seconds",
+			Help: "Seconds until the webhook TLS certificate expires",
+		},
+		[]string{"source"},
+	)
+
+	// CertificateRenewalTotal tracks certificate renewal attempts.
+	// Labels: result (success, error).
+	CertificateRenewalTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_certificate_renewal_total",
+			Help: "Total number of certificate renewal attempts by result",
+		},
+		[]string{"result"},
+	)
 )
 
 func init() {
@@ -54,6 +122,13 @@ func init() {
 	metrics.Registry.MustRegister(PostgresqlCount)
 	metrics.Registry.MustRegister(ObjectCountPerPostgresqlID)
 	metrics.Registry.MustRegister(ObjectNames)
+	metrics.Registry.MustRegister(ReconcileDuration)
+	metrics.Registry.MustRegister(ReconcileErrors)
+	metrics.Registry.MustRegister(ReconcileTotal)
+	metrics.Registry.MustRegister(VaultCredentialResolution)
+	metrics.Registry.MustRegister(VaultPasswordRotation)
+	metrics.Registry.MustRegister(CertificateExpirySeconds)
+	metrics.Registry.MustRegister(CertificateRenewalTotal)
 }
 
 // UpdatePostgresqlCount updates the total number of PostgreSQL instances
@@ -81,4 +156,39 @@ func RemoveObjectInfo(kind, postgresqlID, name, namespace, databasename, usernam
 // RemoveObjectCount removes the count metric for a specific kind and postgresqlID
 func RemoveObjectCount(kind, postgresqlID string) {
 	ObjectCountPerPostgresqlID.DeleteLabelValues(kind, postgresqlID)
+}
+
+// ObserveReconcileDuration records the duration of a reconciliation for the given controller
+func ObserveReconcileDuration(controller string, duration time.Duration) {
+	ReconcileDuration.WithLabelValues(controller).Observe(duration.Seconds())
+}
+
+// IncReconcileErrors increments the reconciliation error counter for the given controller
+func IncReconcileErrors(controller string) {
+	ReconcileErrors.WithLabelValues(controller).Inc()
+}
+
+// IncReconcileTotal increments the total reconciliation counter for the given controller
+func IncReconcileTotal(controller string) {
+	ReconcileTotal.WithLabelValues(controller).Inc()
+}
+
+// IncVaultCredentialResolution increments the Vault credential resolution counter for the given source
+func IncVaultCredentialResolution(source string) {
+	VaultCredentialResolution.WithLabelValues(source).Inc()
+}
+
+// IncVaultPasswordRotation increments the Vault password rotation counter for the given result
+func IncVaultPasswordRotation(result string) {
+	VaultPasswordRotation.WithLabelValues(result).Inc()
+}
+
+// SetCertificateExpiry sets the certificate expiry time in seconds for the given source
+func SetCertificateExpiry(source string, secondsUntilExpiry float64) {
+	CertificateExpirySeconds.WithLabelValues(source).Set(secondsUntilExpiry)
+}
+
+// IncCertificateRenewal increments the certificate renewal counter for the given result
+func IncCertificateRenewal(result string) {
+	CertificateRenewalTotal.WithLabelValues(result).Inc()
 }

@@ -29,7 +29,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
+	certpkg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
 )
 
@@ -50,13 +50,13 @@ func GetCurrentNamespace(namespaceFile string) string {
 
 // UpdateWebhookConfigurationWithCABundle updates the ValidatingWebhookConfiguration with the CA bundle from the secret
 func UpdateWebhookConfigurationWithCABundle(
-	secretName, namespace string, restConfig *rest.Config, webHookName string, lg *zap.SugaredLogger) error {
+	ctx context.Context, secretName, namespace string, restConfig *rest.Config,
+	webHookName string, lg *zap.SugaredLogger,
+) error {
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
-
-	ctx := context.Background()
 
 	// Get the secret containing the certificate
 	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
@@ -104,8 +104,24 @@ func UpdateWebhookConfigurationWithCABundle(
 
 // SetupWebhookCertificates sets up webhook certificates either from provided paths or by generating them
 func SetupWebhookCertificates(
-	cfg *config.Config, webhookNames []string, lg *zap.SugaredLogger,
+	ctx context.Context, cfg *config.Config, webhookNames []string, lg *zap.SugaredLogger,
 ) (webhookCertPath, webhookKeyPath string) {
+	certPath, keyPath, err := setupWebhookCertificatesInternal(
+		ctx, cfg, webhookNames, lg, ctrl.GetConfigOrDie,
+	)
+	if err != nil {
+		lg.Error(err, "Failed to setup webhook certificates")
+		os.Exit(1)
+	}
+	return certPath, keyPath
+}
+
+// setupWebhookCertificatesInternal contains the testable logic for SetupWebhookCertificates.
+// It accepts a getConfig function to allow injecting a test config instead of ctrl.GetConfigOrDie.
+func setupWebhookCertificatesInternal(
+	ctx context.Context, cfg *config.Config, webhookNames []string, lg *zap.SugaredLogger,
+	getConfig func() *rest.Config,
+) (webhookCertPath, webhookKeyPath string, err error) {
 	// Generate or use provided webhook certificates
 	if cfg.WebhookCertPath != "" {
 		// Use provided certificates
@@ -115,14 +131,13 @@ func SetupWebhookCertificates(
 			"webhook-cert-path", cfg.WebhookCertPath,
 			"webhook-cert-name", cfg.WebhookCertName,
 			"webhook-cert-key", cfg.WebhookCertKey)
-		return webhookCertPath, webhookKeyPath
+		return webhookCertPath, webhookKeyPath, nil
 	}
 
 	// Generate self-signed certificates and store in Kubernetes Secret
 	tempCertDir, err := os.MkdirTemp("", "webhook-certs-")
 	if err != nil {
-		lg.Error(err, "Failed to create temporary directory for webhook certificates")
-		os.Exit(1)
+		return "", "", fmt.Errorf("failed to create temporary directory for webhook certificates: %w", err)
 	}
 	lg.Infow("Generating self-signed webhook certificates and storing in Secret", "cert-dir", tempCertDir)
 
@@ -132,12 +147,12 @@ func SetupWebhookCertificates(
 	secretName := fmt.Sprintf("%s-webhook-cert", cfg.WebhookK8sServiceName)
 
 	// Get Kubernetes config
-	restConfig := ctrl.GetConfigOrDie()
-	_, webhookCertPath, webhookKeyPath, err = cert.GenerateSelfSignedCertAndStoreInSecret(
+	restConfig := getConfig()
+	//nolint:contextcheck // GenerateSelfSignedCertAndStoreInSecret does not accept context yet
+	_, webhookCertPath, webhookKeyPath, err = certpkg.GenerateSelfSignedCertAndStoreInSecret(
 		cfg.WebhookK8sServiceName, namespace, secretName, tempCertDir, restConfig)
 	if err != nil {
-		lg.Error(err, "Failed to generate self-signed webhook certificates")
-		os.Exit(1)
+		return "", "", fmt.Errorf("failed to generate self-signed webhook certificates: %w", err)
 	}
 	lg.Infow("Webhook certificates generated and stored in Secret",
 		"secret-name", secretName,
@@ -147,7 +162,7 @@ func SetupWebhookCertificates(
 	// Update all ValidatingWebhookConfigurations with CA bundle from secret
 	for _, webhookName := range webhookNames {
 		if err := UpdateWebhookConfigurationWithCABundle(
-			secretName, namespace, restConfig, webhookName, lg); err != nil {
+			ctx, secretName, namespace, restConfig, webhookName, lg); err != nil {
 			lg.Error(err, "Failed to update ValidatingWebhookConfiguration with CA bundle",
 				"secret-name", secretName,
 				"webhook-name", webhookName)
@@ -159,5 +174,123 @@ func SetupWebhookCertificates(
 			"webhook-name", webhookName)
 	}
 
-	return webhookCertPath, webhookKeyPath
+	return webhookCertPath, webhookKeyPath, nil
+}
+
+// SetupWebhookCertificatesWithVaultPKI sets up webhook certificates
+// using Vault PKI
+func SetupWebhookCertificatesWithVaultPKI(
+	ctx context.Context,
+	pkiManager *certpkg.VaultPKIManager,
+	cfg *config.Config,
+	webhookNames []string,
+	lg *zap.SugaredLogger,
+) (webhookCertPath, webhookKeyPath string) {
+	certPath, keyPath, err := setupWebhookCertificatesWithVaultPKIInternal(
+		ctx, pkiManager, webhookNames, lg, ctrl.GetConfigOrDie,
+	)
+	if err != nil {
+		lg.Error(err, "Failed to setup webhook certificates with Vault PKI")
+		os.Exit(1)
+	}
+	return certPath, keyPath
+}
+
+// setupWebhookCertificatesWithVaultPKIInternal contains the testable logic
+// for SetupWebhookCertificatesWithVaultPKI.
+func setupWebhookCertificatesWithVaultPKIInternal(
+	ctx context.Context,
+	pkiManager *certpkg.VaultPKIManager,
+	webhookNames []string,
+	lg *zap.SugaredLogger,
+	getConfig func() *rest.Config,
+) (webhookCertPath, webhookKeyPath string, err error) {
+	if err := pkiManager.IssueCertificateAndWriteToDisk(ctx); err != nil {
+		return "", "", fmt.Errorf(
+			"failed to issue Vault PKI certificate: %w", err,
+		)
+	}
+
+	caBundle, err := pkiManager.GetCACertificatePEM(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf(
+			"failed to get Vault PKI CA certificate: %w", err,
+		)
+	}
+
+	restConfig := getConfig()
+	for _, webhookName := range webhookNames {
+		if err := UpdateWebhookCABundleFromPEM(
+			ctx, caBundle, restConfig, webhookName, lg,
+		); err != nil {
+			lg.Errorw(
+				"Failed to update webhook CA bundle from Vault PKI",
+				"webhook-name", webhookName,
+				"error", err,
+			)
+			continue
+		}
+		lg.Infow(
+			"Updated webhook CA bundle from Vault PKI",
+			"webhook-name", webhookName,
+		)
+	}
+
+	return pkiManager.CertPath(), pkiManager.KeyPath(), nil
+}
+
+// UpdateWebhookCABundleFromPEM updates a ValidatingWebhookConfiguration
+// with a CA bundle provided as raw PEM bytes
+func UpdateWebhookCABundleFromPEM(
+	ctx context.Context,
+	caBundle []byte,
+	restConfig *rest.Config,
+	webHookName string,
+	lg *zap.SugaredLogger,
+) error {
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	webhookConfig, err := clientset.AdmissionregistrationV1().
+		ValidatingWebhookConfigurations().
+		Get(ctx, webHookName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf(
+			"failed to get ValidatingWebhookConfiguration: %w", err,
+		)
+	}
+
+	updated := false
+	webhookDNS := "postgresql-operator.vyrodovalexey.github.com"
+	for i := range webhookConfig.Webhooks {
+		if webhookConfig.Webhooks[i].Name == webhookDNS {
+			webhookConfig.Webhooks[i].ClientConfig.CABundle = caBundle
+			updated = true
+			break
+		}
+	}
+
+	if !updated {
+		return fmt.Errorf(
+			"webhook '%s' not found in webhook configuration",
+			webhookDNS,
+		)
+	}
+
+	_, err = clientset.AdmissionregistrationV1().
+		ValidatingWebhookConfigurations().
+		Update(ctx, webhookConfig, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf(
+			"failed to update ValidatingWebhookConfiguration: %w", err,
+		)
+	}
+
+	lg.Infow("Successfully updated webhook CA bundle from PEM",
+		"webhook-name", webHookName,
+	)
+
+	return nil
 }

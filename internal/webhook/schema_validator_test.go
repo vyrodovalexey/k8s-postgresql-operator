@@ -68,8 +68,8 @@ func TestSchemaValidator_Handle_NoPostgresqlID(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No postgresqlID specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "postgresqlID is required")
 }
 
 func TestSchemaValidator_Handle_NoSchemaName(t *testing.T) {
@@ -110,8 +110,8 @@ func TestSchemaValidator_Handle_NoSchemaName(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No schema name specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "schema name is required")
 }
 
 func TestSchemaValidator_Handle_NoOwner(t *testing.T) {
@@ -153,8 +153,8 @@ func TestSchemaValidator_Handle_NoOwner(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No owner specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "owner is required")
 }
 
 func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
@@ -229,8 +229,8 @@ func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -310,8 +310,8 @@ func TestSchemaValidator_Handle_NoDuplicate(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.True(t, response.Allowed)
@@ -358,7 +358,7 @@ func TestSchemaValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -394,4 +394,303 @@ func TestSchemaValidator_Handle_DecodeError(t *testing.T) {
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
 	assert.Equal(t, int32(400), response.Result.Code)
+}
+
+func TestSchemaValidator_Handle_VaultUnavailable(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	vaultClient := newUnhealthyVaultClient(t)
+
+	validator := &SchemaValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	schema := &instancev1alpha1.Schema{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-schema",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.SchemaSpec{
+			PostgresqlID: "pg-1",
+			Schema:       "schema1",
+			Owner:        "owner1",
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Vault is not available")
+}
+
+func TestSchemaValidator_Handle_PostgresqlConnectionFailed(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	vaultClient := newHealthyVaultClient(t)
+
+	postgresqlID := "pg-1"
+
+	validator := &SchemaValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	schema := &instancev1alpha1.Schema{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-schema",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.SchemaSpec{
+			PostgresqlID: postgresqlID,
+			Schema:       "schema1",
+			Owner:        "owner1",
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+						Address:      "localhost",
+						Port:         5432,
+					},
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Cannot connect to PostgreSQL")
+}
+
+func TestSchemaValidator_Handle_SchemaListError(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	postgresqlID := "pg-1"
+	schemaName := "schema1"
+
+	validator := &SchemaValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	schema := &instancev1alpha1.Schema{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-schema",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.SchemaSpec{
+			PostgresqlID: postgresqlID,
+			Schema:       schemaName,
+			Owner:        "owner1",
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+					},
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(nil, assert.AnError)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Equal(t, int32(500), response.Result.Code)
+}
+
+func TestSchemaValidator_Handle_UpdateSameResource(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	postgresqlID := "pg-1"
+	schemaName := "schema1"
+
+	validator := &SchemaValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+	}
+
+	schema := &instancev1alpha1.Schema{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-schema",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.SchemaSpec{
+			PostgresqlID: postgresqlID,
+			Schema:       schemaName,
+			Owner:        "owner1",
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+					},
+				},
+			},
+		},
+	}
+
+	// Same schema in the list (update scenario)
+	schemaList := &instancev1alpha1.SchemaList{
+		Items: []instancev1alpha1.Schema{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-schema", // Same name
+					Namespace: "default",     // Same namespace
+				},
+				Spec: instancev1alpha1.SchemaSpec{
+					PostgresqlID: postgresqlID,
+					Schema:       schemaName,
+					Owner:        "owner1",
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Update,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.True(t, response.Allowed)
+}
+
+func TestSchemaValidator_Handle_PostgresqlListError(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	validator := &SchemaValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+	}
+
+	schema := &instancev1alpha1.Schema{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-schema",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.SchemaSpec{
+			PostgresqlID: "pg-1",
+			Schema:       "schema1",
+			Owner:        "owner1",
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Equal(t, int32(403), response.Result.Code)
 }

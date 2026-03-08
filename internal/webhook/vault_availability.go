@@ -21,15 +21,29 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
 // checkVaultAvailability checks if Vault is available with retry logic
 func checkVaultAvailability(
-	ctx context.Context, vaultClient *vault.Client, log *zap.SugaredLogger,
-	retries int, retryDelay time.Duration) error {
+	ctx context.Context, vaultClient *vault.Client,
+	log *zap.SugaredLogger,
+	retries int, retryDelay time.Duration,
+) error {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"webhook.checkVaultAvailability",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"check_vault_availability"),
+			attribute.Int("retry.max_attempts", retries),
+		))
+	defer span.End()
 	if vaultClient == nil {
 		return fmt.Errorf("vault client is not configured")
 	}
@@ -44,7 +58,8 @@ func checkVaultAvailability(
 			lastErr = fmt.Errorf("vault health check failed: %w", err)
 			log.Warnw("Vault availability check failed", "attempt", attempt, "error", lastErr)
 			if attempt < retries {
-				log.Debugw("Retrying Vault availability check", "attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
+				log.Debugw("Retrying Vault availability check",
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
 				time.Sleep(retryDelay)
 			}
 			continue

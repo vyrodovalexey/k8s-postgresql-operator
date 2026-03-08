@@ -23,11 +23,28 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 )
 
 // CloseAllSessions closes all active sessions/connections to a database
 func CloseAllSessions(
-	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName string) error {
+	ctx context.Context, host string, port int32,
+	adminUser, adminPassword, sslMode, databaseName string,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.CloseAllSessions",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String(telemetry.AttrDatabase, databaseName),
+			attribute.String(telemetry.AttrOperation,
+				"close_all_sessions"),
+		))
+	defer span.End()
+	_ = ctx // ctx is used for span propagation
 	// Connect to PostgreSQL as admin user (must connect to postgres database, not the target database)
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=%s connect_timeout=5",
 		host, port, adminUser, adminPassword, sslMode)
@@ -63,7 +80,18 @@ func CloseAllSessions(
 
 // DeleteDatabase deletes a PostgreSQL database
 func DeleteDatabase(
-	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, databaseName string) error {
+	ctx context.Context, host string, port int32,
+	adminUser, adminPassword, sslMode, databaseName string,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.DeleteDatabase",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String(telemetry.AttrDatabase, databaseName),
+			attribute.String(telemetry.AttrOperation,
+				"delete_database"),
+		))
+	defer span.End()
 	// First, close all sessions to the database
 	if err := CloseAllSessions(ctx, host, port, adminUser, adminPassword, sslMode, databaseName); err != nil {
 		return fmt.Errorf("failed to close sessions before deletion: %w", err)

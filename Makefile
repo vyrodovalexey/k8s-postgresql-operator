@@ -210,7 +210,7 @@ CONTROLLER_TOOLS_VERSION ?= v0.18.0
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
-GOLANGCI_LINT_VERSION ?= v2.1.0
+GOLANGCI_LINT_VERSION ?= v2.8.0
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -316,3 +316,79 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+##@ Testing
+
+.PHONY: test-unit
+test-unit: ## Run unit tests with coverage
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/unit.out -covermode=atomic ./internal/... ./cmd/...
+
+.PHONY: test-functional
+test-functional: ## Run functional tests (requires test env)
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/functional.out -covermode=atomic -tags=functional -v -timeout 10m ./test/functional/...
+
+.PHONY: test-integration
+test-integration: ## Run integration tests (requires test env)
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/integration.out -covermode=atomic -tags=integration -v -timeout 10m ./test/integration/...
+
+.PHONY: test-e2e
+test-e2e: ## Run e2e tests
+	mkdir -p coverage
+	go test -race -coverprofile=coverage/e2e.out -covermode=atomic -tags=e2e -v -timeout 15m ./test/e2e/...
+
+.PHONY: test-all
+test-all: test-unit test-functional test-integration test-e2e ## Run all tests
+
+##@ Test Environment
+
+.PHONY: setup-test-env
+setup-test-env: ## Start test environment (docker-compose)
+	docker compose -f test/docker-compose/docker-compose.yml up -d
+	@echo "Waiting for services to be ready..."
+	@sleep 10
+
+.PHONY: setup-vault
+setup-vault: ## Configure Vault KV for testing
+	./test/scripts/setup-vault.sh
+
+.PHONY: setup-vault-pki
+setup-vault-pki: ## Configure Vault PKI for testing
+	./test/scripts/setup-vault-pki.sh
+
+.PHONY: setup-vault-k8s-auth
+setup-vault-k8s-auth: ## Configure Vault Kubernetes auth
+	./test/scripts/setup-vault-k8s-auth.sh
+
+.PHONY: deploy-monitoring
+deploy-monitoring: ## Deploy monitoring charts to local K8s
+	./test/scripts/deploy-monitoring.sh
+
+.PHONY: deploy-operator-local
+deploy-operator-local: docker-build ## Build and deploy operator to local K8s
+	./test/scripts/deploy-operator.sh
+
+.PHONY: publish-dashboards
+publish-dashboards: ## Publish Grafana dashboards
+	./test/scripts/publish-dashboards.sh
+
+.PHONY: teardown-test-env
+teardown-test-env: ## Tear down test environment
+	./test/scripts/teardown.sh
+
+##@ Code Quality
+
+.PHONY: govulncheck
+govulncheck: ## Run govulncheck
+	go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
+.PHONY: helm-lint
+helm-lint: ## Lint Helm chart
+	helm lint charts/k8s-postgresql-operator
+
+.PHONY: helm-template
+helm-template: ## Validate Helm templates
+	helm template k8s-postgresql-operator charts/k8s-postgresql-operator > /dev/null

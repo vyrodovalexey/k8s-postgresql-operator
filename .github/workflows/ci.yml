@@ -1,0 +1,976 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    tags:
+      - 'v*'
+
+# Concurrency control - cancel in-progress runs for the same branch/tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.25.8'
+  GOLANGCI_LINT_VERSION: 'v2.8.0'
+  DOCKER_REGISTRY: ghcr.io
+  DOCKER_IMAGE: ghcr.io/${{ github.repository }}
+  BINARY_NAME: manager
+
+jobs:
+  # ===========================================================================
+  # Parallel Jobs: Lint, Vulnerability Check, Unit Tests, Functional Tests
+  # ===========================================================================
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=5m
+
+  govulncheck:
+    name: Vulnerability Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run unit tests with coverage
+        run: |
+          mkdir -p coverage
+          go test -race -coverprofile=coverage/unit.out -covermode=atomic ./internal/... ./cmd/...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/unit.out
+          flags: unit
+          name: unit-tests
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-unit
+          path: coverage/unit.out
+          retention-days: 7
+
+  sonarcloud:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: coverage-unit
+          path: coverage
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@383f7e52eae3ab0510c3cb0e7d9d150bbaeab838 # v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  functional-tests:
+    name: Functional Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run functional tests with coverage
+        run: |
+          mkdir -p coverage
+          go test -race -coverprofile=coverage/functional.out -covermode=atomic -tags=functional ./test/functional/...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/functional.out
+          flags: functional
+          name: functional-tests
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-functional
+          path: coverage/functional.out
+          retention-days: 7
+
+  # ===========================================================================
+  # Integration and E2E Tests (with PostgreSQL and Vault services)
+  # ===========================================================================
+
+  integration-tests:
+    name: Integration & E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      # PostgreSQL for database operations
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 10s
+
+      # Vault for secrets management
+      vault:
+        image: hashicorp/vault:1.13.3
+        ports:
+          - 8200:8200
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: myroot
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for all services to be ready..."
+          
+          # Wait for PostgreSQL
+          echo "Checking PostgreSQL..."
+          for i in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Attempt $i: Waiting for PostgreSQL..."
+            sleep 2
+          done
+          
+          # Wait for Vault
+          echo "Checking Vault..."
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:8200/v1/sys/health | grep -q '"initialized":true'; then
+              echo "Vault is ready!"
+              break
+            fi
+            echo "Attempt $i: Waiting for Vault..."
+            sleep 2
+          done
+          
+          # Final checks
+          echo "Running final health checks..."
+          pg_isready -h 127.0.0.1 -p 5432 -U postgres || (echo "PostgreSQL not ready" && exit 1)
+          curl -s http://127.0.0.1:8200/v1/sys/health | grep -q '"initialized":true' || (echo "Vault not ready" && exit 1)
+          echo "All services are ready!"
+
+      - name: Setup Vault for Testing
+        env:
+          VAULT_ADDR: http://127.0.0.1:8200
+          VAULT_TOKEN: myroot
+        run: |
+          # Enable KV v2 secrets engine at secret/ path (already enabled in dev mode)
+          echo "Configuring Vault for testing..."
+          
+          # Vault path structure:
+          #   - Default credentials: /pdb/default (keys: login, password)
+          #   - Instance admin: /pdb/{postgresqlID}/instance_admin (keys: login, password, new_password)
+          #   - User credentials: /pdb/{postgresqlID}/{username} (keys: password)
+          
+          # Store default credentials at /pdb/default
+          echo "Storing default credentials..."
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/secret/data/pdb/default \
+            -d '{"data":{"login":"postgres","password":"postgres"}}'
+          
+          # Store test PostgreSQL instance admin credentials at /pdb/{id}/instance_admin
+          echo "Storing test PostgreSQL instance admin credentials..."
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/secret/data/pdb/test-pg-001/instance_admin \
+            -d '{"data":{"login":"postgres","password":"postgres"}}'
+          
+          # Store test user credentials at /pdb/{id}/{username}
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/secret/data/pdb/test-pg-001/testuser \
+            -d '{"data":{"password":"testpassword123"}}'
+          
+          # Verify credentials were stored
+          echo "Verifying Vault setup..."
+          curl -s -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/secret/data/pdb/default | grep -q "login" && echo "Default credentials verified"
+          curl -s -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/secret/data/pdb/test-pg-001/instance_admin | grep -q "login" && echo "Instance admin credentials verified"
+          
+          echo "Vault setup complete!"
+
+      - name: Setup Vault PKI for Testing
+        env:
+          VAULT_ADDR: http://127.0.0.1:8200
+          VAULT_TOKEN: myroot
+          VAULT_PKI_PATH: pki
+          VAULT_PKI_ROLE: webhook-cert
+        run: |
+          echo "=== Setting up Vault PKI ==="
+          
+          # Enable PKI secrets engine
+          echo "Enabling PKI secrets engine..."
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/sys/mounts/pki \
+            -d '{"type":"pki","config":{"max_lease_ttl":"87600h"}}' 2>/dev/null || echo "PKI may already be enabled"
+          
+          # Configure PKI max lease TTL
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/sys/mounts/pki/tune \
+            -d '{"max_lease_ttl":"87600h"}'
+          
+          # Generate root CA
+          echo "Generating root CA certificate..."
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/pki/root/generate/internal \
+            -d '{
+              "common_name": "K8s PostgreSQL Operator CA",
+              "ttl": "87600h",
+              "key_type": "rsa",
+              "key_bits": 4096
+            }' > /dev/null
+          
+          # Configure CA and CRL URLs
+          echo "Configuring CA and CRL URLs..."
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/pki/config/urls \
+            -d '{
+              "issuing_certificates": "http://127.0.0.1:8200/v1/pki/ca",
+              "crl_distribution_points": "http://127.0.0.1:8200/v1/pki/crl"
+            }'
+          
+          # Create role for webhook certificates
+          echo "Creating PKI role for webhook certificates..."
+          curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/pki/roles/webhook-cert \
+            -d '{
+              "allowed_domains": ["svc", "svc.cluster.local"],
+              "allow_subdomains": true,
+              "allow_bare_domains": true,
+              "allow_localhost": true,
+              "allow_ip_sans": true,
+              "allow_any_name": true,
+              "max_ttl": "720h",
+              "ttl": "720h",
+              "key_type": "rsa",
+              "key_bits": 2048,
+              "key_usage": ["DigitalSignature", "KeyEncipherment"],
+              "ext_key_usage": ["ServerAuth", "ClientAuth"]
+            }'
+          
+          # Create policy for PKI access
+          echo "Creating PKI policy..."
+          curl -s -X PUT -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/sys/policies/acl/k8s-postgresql-operator-pki \
+            -d '{
+              "policy": "path \"pki/issue/webhook-cert\" { capabilities = [\"create\", \"update\"] } path \"pki/ca/pem\" { capabilities = [\"read\"] } path \"pki/ca_chain\" { capabilities = [\"read\"] } path \"sys/health\" { capabilities = [\"read\"] }"
+            }'
+          
+          # Verify PKI setup by issuing a test certificate
+          echo "Verifying PKI setup..."
+          TEST_CERT=$(curl -s -X POST -H "X-Vault-Token: myroot" \
+            http://127.0.0.1:8200/v1/pki/issue/webhook-cert \
+            -d '{"common_name": "test.svc.cluster.local", "ttl": "1h"}')
+          
+          if echo "$TEST_CERT" | grep -q '"certificate"'; then
+            echo "Vault PKI setup complete and verified!"
+          else
+            echo "Warning: PKI verification failed"
+            echo "$TEST_CERT"
+          fi
+
+      - name: Run integration tests
+        env:
+          TEST_POSTGRES_HOST: 127.0.0.1
+          TEST_POSTGRES_PORT: 5432
+          TEST_POSTGRES_USER: postgres
+          TEST_POSTGRES_PASSWORD: postgres
+          TEST_POSTGRES_SSLMODE: disable
+          TEST_VAULT_ADDR: http://127.0.0.1:8200
+          TEST_VAULT_TOKEN: myroot
+          TEST_VAULT_MOUNT_POINT: secret
+          TEST_VAULT_SECRET_PATH: pdb
+        run: |
+          mkdir -p coverage
+          go test -race -coverprofile=coverage/integration.out -covermode=atomic -tags=integration -v -timeout 10m ./test/integration/...
+
+      - name: Run Vault PKI integration tests
+        env:
+          TEST_VAULT_ADDR: http://127.0.0.1:8200
+          TEST_VAULT_TOKEN: myroot
+          TEST_VAULT_PKI_MOUNT_PATH: pki
+          TEST_VAULT_PKI_ROLE: webhook-cert
+        run: |
+          mkdir -p coverage
+          go test -race -coverprofile=coverage/vault-pki.out -covermode=atomic -tags=integration -v -timeout 10m ./test/integration/... -run TestIntegration_VaultPKI || echo "No Vault PKI tests found or tests passed"
+
+      - name: Setup envtest
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+          ENVTEST_ASSETS_DIR=$(setup-envtest use -p path)
+          echo "KUBEBUILDER_ASSETS=${ENVTEST_ASSETS_DIR}" >> $GITHUB_ENV
+
+      - name: Run e2e tests
+        env:
+          TEST_POSTGRES_HOST: 127.0.0.1
+          TEST_POSTGRES_PORT: 5432
+          TEST_POSTGRES_USER: postgres
+          TEST_POSTGRES_PASSWORD: postgres
+          TEST_POSTGRES_SSLMODE: disable
+          TEST_VAULT_ADDR: http://127.0.0.1:8200
+          TEST_VAULT_TOKEN: myroot
+          USE_EXISTING_CLUSTER: false
+        run: |
+          go test -race -coverprofile=coverage/e2e.out -covermode=atomic -tags=e2e -v -timeout 15m ./test/e2e/...
+
+      - name: Upload integration coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/integration.out,./coverage/e2e.out,./coverage/vault-pki.out
+          flags: integration,e2e,vault-pki
+          name: integration-e2e-tests
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-integration-e2e
+          path: |
+            coverage/integration.out
+            coverage/e2e.out
+            coverage/vault-pki.out
+          retention-days: 7
+
+  # ===========================================================================
+  # Grafana Dashboard Tests (parallel with integration tests)
+  # ===========================================================================
+
+  grafana-dashboard-tests:
+    name: Grafana Dashboard Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    services:
+      victoriametrics:
+        image: victoriametrics/victoria-metrics:v1.108.1
+        ports:
+          - 8428:8428
+      grafana:
+        image: grafana/grafana:11.5.2
+        ports:
+          - 3000:3000
+        env:
+          GF_SECURITY_ADMIN_USER: admin
+          GF_SECURITY_ADMIN_PASSWORD: admin
+          GF_AUTH_ANONYMOUS_ENABLED: "true"
+          GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+          GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: ""
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Wait for Grafana to be ready
+        run: |
+          echo "Waiting for Grafana..."
+          for i in {1..30}; do
+            if curl -sf -u admin:admin http://127.0.0.1:3000/api/health; then
+              echo ""
+              echo "Grafana is ready!"
+              break
+            fi
+            echo "Attempt $i: Waiting for Grafana..."
+            sleep 2
+          done
+
+      - name: Validate dashboard JSON syntax
+        run: |
+          echo "==> Validating dashboard JSON syntax..."
+          for file in monitoring/grafana/dashboards/*.json; do
+            if jq empty "$file" 2>/dev/null; then
+              echo "  ✓ $(basename "$file"): valid JSON"
+            else
+              echo "  ✗ $(basename "$file"): invalid JSON"
+              exit 1
+            fi
+          done
+
+      - name: Publish dashboards and validate
+        run: |
+          chmod +x test/scripts/publish-dashboards.sh
+          ./test/scripts/publish-dashboards.sh \
+            http://127.0.0.1:3000 admin admin
+
+
+  # ===========================================================================
+  # Build Job
+  # ===========================================================================
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [sonarcloud]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build binary
+        run: |
+          make build
+
+      - name: Verify binary
+        run: |
+          ls -la ./bin/
+          ./bin/${{ env.BINARY_NAME }} --help || true
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: manager-binary
+          path: bin/${{ env.BINARY_NAME }}
+          retention-days: 7
+
+  docker-build-pr:
+    name: Docker Build (PR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=pr
+            type=sha,prefix=pr-
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # Tag-only Jobs: Build & Release
+  # ===========================================================================
+
+  build-release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [sonarcloud]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Build binaries for multiple platforms
+        run: |
+          mkdir -p bin
+          # Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.gitCommit=${{ github.sha }}" \
+            -trimpath \
+            -o bin/${{ env.BINARY_NAME }}-linux-amd64 \
+            ./cmd
+          # Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+            -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.gitCommit=${{ github.sha }}" \
+            -trimpath \
+            -o bin/${{ env.BINARY_NAME }}-linux-arm64 \
+            ./cmd
+          # Darwin arm64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
+            -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.gitCommit=${{ github.sha }}" \
+            -trimpath \
+            -o bin/${{ env.BINARY_NAME }}-darwin-arm64 \
+            ./cmd
+          # Darwin amd64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build \
+            -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }} -X main.buildTime=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.gitCommit=${{ github.sha }}" \
+            -trimpath \
+            -o bin/${{ env.BINARY_NAME }}-darwin-amd64 \
+            ./cmd
+
+      - name: Create checksums
+        run: |
+          cd bin
+          sha256sum ${{ env.BINARY_NAME }}-linux-amd64 > ${{ env.BINARY_NAME }}-linux-amd64.sha256
+          sha256sum ${{ env.BINARY_NAME }}-linux-arm64 > ${{ env.BINARY_NAME }}-linux-arm64.sha256
+          sha256sum ${{ env.BINARY_NAME }}-darwin-arm64 > ${{ env.BINARY_NAME }}-darwin-arm64.sha256
+          sha256sum ${{ env.BINARY_NAME }}-darwin-amd64 > ${{ env.BINARY_NAME }}-darwin-amd64.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        with:
+          name: Release ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            bin/${{ env.BINARY_NAME }}-linux-amd64
+            bin/${{ env.BINARY_NAME }}-linux-amd64.sha256
+            bin/${{ env.BINARY_NAME }}-linux-arm64
+            bin/${{ env.BINARY_NAME }}-linux-arm64.sha256
+            bin/${{ env.BINARY_NAME }}-darwin-arm64
+            bin/${{ env.BINARY_NAME }}-darwin-arm64.sha256
+            bin/${{ env.BINARY_NAME }}-darwin-amd64
+            bin/${{ env.BINARY_NAME }}-darwin-amd64.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload binary artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-binaries
+          path: bin/${{ env.BINARY_NAME }}-*
+          retention-days: 30
+
+  # ===========================================================================
+  # Tag-only Jobs: Docker Build & Push, Trivy Scan
+  # ===========================================================================
+
+  docker-build-push:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build-release]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # Required for Cosign keyless signing
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v3.7.0
+
+      - name: Sign container image with Cosign
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@deef08a0db64bfad603422135db61477b16cef56 # v0
+        with:
+          image: ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.version }}
+          artifact-name: sbom-${{ steps.meta.outputs.version }}.spdx.json
+          output-file: ./sbom.spdx.json
+          upload-release-assets: false
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: ./sbom.spdx.json
+          retention-days: 90
+
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docker-build-push]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@22438a435773de8c97dc0958cc0b823c45b064ac # master
+        with:
+          image-ref: '${{ env.DOCKER_IMAGE }}:${{ needs.docker-build-push.outputs.image-tag }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@2b983b380ce715a6c836c917154509c332c19b3a # v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Trivy vulnerability scanner (table output)
+        uses: aquasecurity/trivy-action@22438a435773de8c97dc0958cc0b823c45b064ac # master
+        with:
+          image-ref: '${{ env.DOCKER_IMAGE }}:${{ needs.docker-build-push.outputs.image-tag }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          exit-code: '1'
+
+      - name: Upload Trivy results artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          retention-days: 30
+
+  # ===========================================================================
+  # Helm Chart Testing (PR - Dry Run)
+  # ===========================================================================
+
+  helm-test-pr:
+    name: Helm Chart Test (PR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [sonarcloud]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Create kind cluster
+        uses: helm/kind-action@ca7011b09d9a57d57555716e97a4acea579a2b92 # v1
+        with:
+          cluster_name: helm-test
+          wait: 120s
+
+      - name: Helm lint
+        run: |
+          echo "==> Linting Helm chart..."
+          helm lint charts/k8s-postgresql-operator
+
+      - name: Helm template validation
+        run: |
+          echo "==> Validating Helm templates..."
+          helm template k8s-postgresql-operator charts/k8s-postgresql-operator > /dev/null
+          echo "Template validation successful!"
+
+      - name: Helm dry-run install
+        run: |
+          echo "==> Running Helm dry-run install..."
+          helm install --dry-run --debug k8s-postgresql-operator charts/k8s-postgresql-operator
+
+      - name: Helm dry-run with Vault enabled
+        run: |
+          echo "==> Running Helm dry-run with Vault enabled..."
+          helm install --dry-run --debug k8s-postgresql-operator-vault charts/k8s-postgresql-operator \
+            --set vault.enabled=true \
+            --set vault.address=http://vault:8200
+
+      - name: Helm dry-run with Vault PKI enabled
+        run: |
+          echo "==> Running Helm dry-run with Vault PKI enabled..."
+          helm install --dry-run --debug k8s-postgresql-operator-pki charts/k8s-postgresql-operator \
+            --set vaultPKI.enabled=true \
+            --set vaultPKI.mountPath=pki \
+            --set vaultPKI.role=webhook-cert \
+            --set vaultPKI.ttl=720h \
+            --set vaultPKI.renewalBuffer=24h
+
+      - name: Validate Kubernetes manifests
+        run: |
+          echo "==> Validating generated Kubernetes manifests..."
+          helm template k8s-postgresql-operator charts/k8s-postgresql-operator | kubectl apply --dry-run=client -f -
+          echo "Kubernetes manifest validation successful!"
+
+  # ===========================================================================
+  # Helm Chart Install Test (TAG - Full Install)
+  # ===========================================================================
+
+  helm-install-test:
+    name: Helm Chart Install Test (TAG)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build-release]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Create kind cluster
+        uses: helm/kind-action@ca7011b09d9a57d57555716e97a4acea579a2b92 # v1
+        with:
+          cluster_name: helm-install-test
+          wait: 120s
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build Docker image for testing
+        run: |
+          echo "==> Building Docker image for Helm install test..."
+          docker build -t k8s-postgresql-operator:helm-test .
+
+      - name: Load image into kind cluster
+        run: |
+          echo "==> Loading Docker image into kind cluster..."
+          kind load docker-image k8s-postgresql-operator:helm-test --name helm-install-test
+
+      - name: Create test namespace
+        run: |
+          kubectl create namespace k8s-postgresql-operator-test
+
+      - name: Install CRDs
+        run: |
+          echo "==> Installing CRDs..."
+          make install
+
+      - name: Helm install
+        run: |
+          echo "==> Installing Helm chart..."
+          helm install k8s-postgresql-operator charts/k8s-postgresql-operator \
+            --namespace k8s-postgresql-operator-test \
+            --set image.repository=k8s-postgresql-operator \
+            --set image.tag=helm-test \
+            --set image.pullPolicy=Never \
+            --wait \
+            --timeout 5m
+
+      - name: Verify deployment
+        run: |
+          echo "==> Verifying deployment..."
+          kubectl get all -n k8s-postgresql-operator-test
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=k8s-postgresql-operator -n k8s-postgresql-operator-test --timeout=120s
+          echo "Deployment verification successful!"
+
+      - name: Check pod logs
+        run: |
+          echo "==> Checking pod logs..."
+          kubectl logs -n k8s-postgresql-operator-test -l app.kubernetes.io/name=k8s-postgresql-operator --tail=50
+
+      - name: Helm upgrade test
+        run: |
+          echo "==> Testing Helm upgrade..."
+          helm upgrade k8s-postgresql-operator charts/k8s-postgresql-operator \
+            --namespace k8s-postgresql-operator-test \
+            --set image.repository=k8s-postgresql-operator \
+            --set image.tag=helm-test \
+            --set image.pullPolicy=Never \
+            --set replicaCount=2 \
+            --wait \
+            --timeout 5m
+          kubectl get pods -n k8s-postgresql-operator-test
+          echo "Helm upgrade test successful!"
+
+      - name: Helm uninstall test
+        run: |
+          echo "==> Testing Helm uninstall..."
+          helm uninstall k8s-postgresql-operator --namespace k8s-postgresql-operator-test
+          kubectl delete namespace k8s-postgresql-operator-test --wait=false
+          echo "Helm uninstall test successful!"

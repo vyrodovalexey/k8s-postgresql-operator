@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,19 @@ type GrantValidator struct {
 }
 
 // Handle handles the admission request for Grant resources
-func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *GrantValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"GrantValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "grant"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var grant instancev1alpha1.Grant
 
 	if err := v.Decoder.Decode(req, &grant); err != nil {
@@ -44,13 +59,13 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 
 	// Check if postgresqlID, role, and database are specified
 	if grant.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if grant.Spec.Role == "" {
-		return admission.Allowed("No role specified")
+		return admission.Denied("role is required")
 	}
 	if grant.Spec.Database == "" {
-		return admission.Allowed("No database specified")
+		return admission.Denied("database is required")
 	}
 
 	postgresqlID := grant.Spec.PostgresqlID
@@ -96,7 +111,9 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 	}
 
 	if !databaseExists {
-		msg := fmt.Sprintf("Database %s with postgresqlID %s does not exist in any namespace", databaseName, postgresqlID)
+		msg := fmt.Sprintf(
+			"Database %s with postgresqlID %s does not exist in any namespace",
+			databaseName, postgresqlID)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "database", databaseName)
 		return admission.Denied(msg)
 	}
@@ -112,8 +129,11 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "role", role, "database", databaseName,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID,
+			"role", role, "database", databaseName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

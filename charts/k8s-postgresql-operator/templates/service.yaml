@@ -11,6 +11,12 @@ spec:
       targetPort: {{ .Values.service.targetPort }}
       protocol: TCP
       name: https
+    {{- if .Values.metrics.enabled }}
+    - port: {{ .Values.metrics.port | default 8080 }}
+      targetPort: http-metrics
+      protocol: TCP
+      name: http-metrics
+    {{- end }}
   selector:
     {{- include "k8s-postgresql-operator.selectorLabels" . | nindent 4 }}
 

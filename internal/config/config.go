@@ -17,7 +17,7 @@ const (
 	defaultK8sWebhookNameSchema     = "k8s-postgresql-operator-validating-webhook-schema"
 	defaultEnableLeaderElection     = false
 	defaultProbeAddr                = ":8081"
-	defaultVaultAddr                = "http://0.0.0.0:8200"
+	defaultVaultAddr                = ""
 	defaultVaultRole                = "role"
 	defaultVaultMountPoint          = "secret"
 	defaultVaultSecretPath          = "pdb"
@@ -29,6 +29,14 @@ const (
 	defaultPostgresqlConnectionTimeoutSecs = 10
 	defaultVaultAvailabilityRetries        = 3
 	defaultVaultAvailabilityRetryDelaySecs = 10
+	defaultVaultPKIEnabled                 = true
+	defaultVaultPKIMountPath               = "pki"
+	defaultVaultPKIRole                    = "webhook-cert"
+	defaultVaultPKITTL                     = "720h"
+	defaultVaultPKIRenewalBuffer           = "24h"
+	defaultMetricsCollectionIntervalSecs   = 30
+	defaultOTLPEndpoint                    = ""
+	defaultOTLPInsecure                    = true
 )
 
 // Config Структура для хранения конфигурации
@@ -58,6 +66,14 @@ type Config struct {
 	PostgresqlConnectionTimeoutSecs int    `env:"POSTGRESQL_CONNECTION_TIMEOUT_SECS"`
 	VaultAvailabilityRetries        int    `env:"VAULT_AVAILABILITY_RETRIES"`
 	VaultAvailabilityRetryDelaySecs int    `env:"VAULT_AVAILABILITY_RETRY_DELAY_SECS"`
+	VaultPKIEnabled                 bool   `env:"VAULT_PKI_ENABLED"`
+	VaultPKIMountPath               string `env:"VAULT_PKI_MOUNT_PATH"`
+	VaultPKIRole                    string `env:"VAULT_PKI_ROLE"`
+	VaultPKITTL                     string `env:"VAULT_PKI_TTL"`
+	VaultPKIRenewalBuffer           string `env:"VAULT_PKI_RENEWAL_BUFFER"`
+	MetricsCollectionIntervalSecs   int    `env:"METRICS_COLLECTION_INTERVAL_SECS"`
+	OTLPEndpoint                    string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	OTLPInsecure                    bool   `env:"OTEL_EXPORTER_OTLP_INSECURE"`
 }
 
 // New Функция для создания нового экземпляра конфигурации
@@ -88,6 +104,14 @@ func New() *Config {
 		defaultPostgresqlConnectionTimeoutSecs,
 		defaultVaultAvailabilityRetries,
 		defaultVaultAvailabilityRetryDelaySecs,
+		defaultVaultPKIEnabled,
+		defaultVaultPKIMountPath,
+		defaultVaultPKIRole,
+		defaultVaultPKITTL,
+		defaultVaultPKIRenewalBuffer,
+		defaultMetricsCollectionIntervalSecs,
+		defaultOTLPEndpoint,
+		defaultOTLPInsecure,
 	}
 }
 
@@ -99,6 +123,11 @@ func (c *Config) PostgresqlConnectionTimeout() time.Duration {
 // VaultAvailabilityRetryDelay returns the delay duration for Vault availability retries
 func (c *Config) VaultAvailabilityRetryDelay() time.Duration {
 	return time.Duration(c.VaultAvailabilityRetryDelaySecs) * time.Second
+}
+
+// MetricsCollectionInterval returns the interval duration for periodic metrics collection
+func (c *Config) MetricsCollectionInterval() time.Duration {
+	return time.Duration(c.MetricsCollectionIntervalSecs) * time.Second
 }
 
 func (c *Config) SetupWebhooksList() []string {
