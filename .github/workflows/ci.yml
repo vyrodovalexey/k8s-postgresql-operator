@@ -495,8 +495,8 @@ jobs:
 
       - name: Publish dashboards and validate
         run: |
-          chmod +x test/monitoring/scripts/publish-dashboards.sh
-          ./test/monitoring/scripts/publish-dashboards.sh \
+          chmod +x test/scripts/publish-dashboards.sh
+          ./test/scripts/publish-dashboards.sh \
             http://127.0.0.1:3000 admin admin
 
 
