@@ -165,13 +165,13 @@ func TestIntegration_PostgreSQLFullLifecycle(t *testing.T) {
 	})
 
 	// Step 6: Verify user can connect to the database
-	// Note: CreateOrUpdateUser uses pq.QuoteIdentifier for the password, which wraps it
-	// in double quotes. The actual password stored in PostgreSQL includes these quotes.
+	// Note: CreateOrUpdateUser uses pq.QuoteLiteral for the password, which properly
+	// escapes it as a SQL string literal. The actual password stored in PostgreSQL
+	// is the plain password value (no extra quoting).
 	t.Run("Step6_VerifyUserConnection", func(t *testing.T) {
-		quotedPassword := fmt.Sprintf("%q", password)
 		connected, err := postgresql.TestConnection(
 			ctx, pgCfg.Host, pgCfg.Port, dbName,
-			username, quotedPassword, pgCfg.SSLMode,
+			username, password, pgCfg.SSLMode,
 			log, 3, 2*time.Second,
 		)
 		require.NoError(t, err, "User should be able to connect to the database")
