@@ -272,6 +272,9 @@ func TestMetricsRegistration(t *testing.T) {
 	err3 := ObjectNames.WithLabelValues("test", "test", "test", "test", "", "").Write(metric3)
 	require.NoError(t, err3)
 	assert.NotNil(t, metric3)
+
+	assert.NotNil(t, CertificateExpirySeconds)
+	assert.NotNil(t, CertificateRenewalTotal)
 }
 
 func TestMultipleUpdates(t *testing.T) {
@@ -479,4 +482,113 @@ func TestConcurrentUpdates(t *testing.T) {
 	// The value should be one of the values we set (0-9)
 	assert.GreaterOrEqual(t, *metric.Gauge.Value, float64(0))
 	assert.LessOrEqual(t, *metric.Gauge.Value, float64(9))
+}
+
+func TestSetCertificateExpiry(t *testing.T) {
+	// Reset metrics
+	CertificateExpirySeconds.Reset()
+
+	tests := []struct {
+		name    string
+		source  string
+		seconds float64
+	}{
+		{
+			name:    "vault_pki expiry",
+			source:  "vault_pki",
+			seconds: 86400,
+		},
+		{
+			name:    "self_signed expiry",
+			source:  "self_signed",
+			seconds: 31536000,
+		},
+		{
+			name:    "near expiry",
+			source:  "vault_pki",
+			seconds: 3600,
+		},
+		{
+			name:    "expired certificate",
+			source:  "vault_pki",
+			seconds: -100,
+		},
+		{
+			name:    "zero seconds",
+			source:  "self_signed",
+			seconds: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			SetCertificateExpiry(tt.source, tt.seconds)
+
+			metric := &dto.Metric{}
+			err := CertificateExpirySeconds.WithLabelValues(
+				tt.source,
+			).Write(metric)
+			require.NoError(t, err)
+			assert.Equal(t, tt.seconds, *metric.Gauge.Value)
+		})
+	}
+}
+
+func TestIncCertificateRenewal(t *testing.T) {
+	// Reset metrics
+	CertificateRenewalTotal.Reset()
+
+	tests := []struct {
+		name      string
+		result    string
+		callCount int
+	}{
+		{
+			name:      "single success",
+			result:    "success",
+			callCount: 1,
+		},
+		{
+			name:      "multiple errors",
+			result:    "error",
+			callCount: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i := 0; i < tt.callCount; i++ {
+				IncCertificateRenewal(tt.result)
+			}
+
+			metric := &dto.Metric{}
+			err := CertificateRenewalTotal.WithLabelValues(
+				tt.result,
+			).Write(metric)
+			require.NoError(t, err)
+			assert.Equal(t,
+				float64(tt.callCount), *metric.Counter.Value,
+			)
+		})
+	}
+}
+
+func TestCertificateMetricsRegistration(t *testing.T) {
+	assert.NotNil(t, CertificateExpirySeconds)
+	assert.NotNil(t, CertificateRenewalTotal)
+
+	// Verify metrics can be written
+	metric := &dto.Metric{}
+	err := CertificateExpirySeconds.WithLabelValues(
+		"test",
+	).Write(metric)
+	require.NoError(t, err)
+	assert.NotNil(t, metric)
+
+	metric2 := &dto.Metric{}
+	err2 := CertificateRenewalTotal.WithLabelValues(
+		"test",
+	).Write(metric2)
+	require.NoError(t, err2)
+	assert.NotNil(t, metric2)
 }

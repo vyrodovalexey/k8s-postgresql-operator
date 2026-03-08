@@ -29,6 +29,7 @@ import (
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/cert"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/logging"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -234,6 +235,19 @@ func main() {
 	ctrl.SetLogger(zapr.NewLogger(zapLogger))
 	klog.SetLogger(zapr.NewLogger(zapLogger))
 
+	// Initialize OpenTelemetry tracing
+	tp, tpErr := telemetry.InitTracerProvider(
+		context.Background(),
+		"k8s-postgresql-operator",
+		cfg.OTLPEndpoint,
+		cfg.OTLPInsecure,
+	)
+	if tpErr != nil {
+		lg.Errorw("Failed to initialize tracer provider",
+			"error", tpErr)
+		os.Exit(1)
+	}
+
 	lg.Infow("Server starting with: ")
 
 	// Disable http/2 due to vulnerabilities (CVE mitigations)
@@ -309,6 +323,9 @@ func main() {
 
 	if err := mgr.Start(ctx); err != nil {
 		lg.Errorw("Problem starting postgresql operator", "error", err)
+		telemetry.ShutdownTracerProvider(context.Background(), tp)
 		os.Exit(1)
 	}
+
+	telemetry.ShutdownTracerProvider(context.Background(), tp)
 }

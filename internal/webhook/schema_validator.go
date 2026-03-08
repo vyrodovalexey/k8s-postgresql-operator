@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,19 @@ type SchemaValidator struct {
 }
 
 // Handle handles the admission request for Schema resources
-func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *SchemaValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"SchemaValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "schema"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var schema instancev1alpha1.Schema
 
 	if err := v.Decoder.Decode(req, &schema); err != nil {

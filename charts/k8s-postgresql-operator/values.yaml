@@ -129,6 +129,12 @@ metrics:
   serviceMonitor:
     enabled: false
 
+# Tracing configuration (OTLP)
+tracing:
+  enabled: false
+  endpoint: ""
+  insecure: true
+
 # CRDs are automatically installed from the crds/ directory
 # They are installed before templates are rendered
 

@@ -229,8 +229,8 @@ func TestSchemaValidator_Handle_DuplicateSchema(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -310,8 +310,8 @@ func TestSchemaValidator_Handle_NoDuplicate(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.True(t, response.Allowed)
@@ -358,7 +358,7 @@ func TestSchemaValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -500,7 +500,7 @@ func TestSchemaValidator_Handle_PostgresqlConnectionFailed(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -563,8 +563,8 @@ func TestSchemaValidator_Handle_SchemaListError(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(nil, assert.AnError)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(nil, assert.AnError)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -644,8 +644,8 @@ func TestSchemaValidator_Handle_UpdateSameResource(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(schemaList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.True(t, response.Allowed)
@@ -688,7 +688,7 @@ func TestSchemaValidator_Handle_PostgresqlListError(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Schema")).Return(schema, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)

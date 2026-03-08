@@ -26,6 +26,11 @@ import (
 
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 )
 
 // ErrSecretNotFound indicates the secret path does not exist in Vault
@@ -100,13 +105,22 @@ func NewClient(
 
 // CheckHealth checks if Vault is available and healthy
 func (c *Client) CheckHealth(ctx context.Context) error {
+	_, span := otel.Tracer("vault").Start(ctx, "vault.CheckHealth",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation, "check_health"),
+		))
+	defer span.End()
+
 	health, err := c.client.Sys().Health()
 	if err != nil {
+		telemetry.RecordError(span, err)
 		return fmt.Errorf("failed to check Vault health: %w", err)
 	}
 
 	if health == nil {
-		return fmt.Errorf("vault health check returned nil")
+		healthErr := fmt.Errorf("vault health check returned nil")
+		telemetry.RecordError(span, healthErr)
+		return healthErr
 	}
 
 	// Health check is successful if we get a response (even if sealed)
@@ -116,19 +130,42 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 
 // GetPostgresqlCredentials retrieves PostgreSQL instance admin credentials from Vault KV store
 func (c *Client) GetPostgresqlCredentials(
-	ctx context.Context, postgresqlID string) (login, password string, err error) {
-	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
+	ctx context.Context, postgresqlID string,
+) (login, password string, err error) {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.GetPostgresqlCredentials",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID, postgresqlID),
+			attribute.String(telemetry.AttrOperation,
+				"get_postgresql_credentials"),
+		))
+	defer span.End()
+
+	kv2Path := fmt.Sprintf(
+		"%s/%s/instance_admin", c.vaultSecretPath, postgresqlID,
+	)
 
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
 		if isVaultNotFoundError(err) {
-			return "", "", fmt.Errorf("instance admin credentials at path %s: %w", kv2Path, ErrSecretNotFound)
+			notFoundErr := fmt.Errorf(
+				"instance admin credentials at path %s: %w",
+				kv2Path, ErrSecretNotFound)
+			telemetry.RecordError(span, notFoundErr)
+			return "", "", notFoundErr
 		}
-		return "", "", fmt.Errorf("failed to read secret from Vault: %w", err)
+		readErr := fmt.Errorf(
+			"failed to read secret from Vault: %w", err)
+		telemetry.RecordError(span, readErr)
+		return "", "", readErr
 	}
 
 	if secret == nil || secret.Data == nil {
-		return "", "", fmt.Errorf("instance admin credentials at path %s: %w", kv2Path, ErrSecretNotFound)
+		notFoundErr := fmt.Errorf(
+			"instance admin credentials at path %s: %w",
+			kv2Path, ErrSecretNotFound)
+		telemetry.RecordError(span, notFoundErr)
+		return "", "", notFoundErr
 	}
 
 	if u, ok := secret.Data["login"].(string); ok {
@@ -139,7 +176,10 @@ func (c *Client) GetPostgresqlCredentials(
 	}
 
 	if login == "" || password == "" {
-		return "", "", fmt.Errorf("credentials not found in secret at path: %s", kv2Path)
+		credErr := fmt.Errorf(
+			"credentials not found in secret at path: %s", kv2Path)
+		telemetry.RecordError(span, credErr)
+		return "", "", credErr
 	}
 
 	return login, password, nil
@@ -147,19 +187,40 @@ func (c *Client) GetPostgresqlCredentials(
 
 // GetDefaultCredentials retrieves default PostgreSQL credentials from Vault KV store
 // These are used as fallback when instance-specific credentials don't exist
-func (c *Client) GetDefaultCredentials(ctx context.Context) (login, password string, err error) {
+func (c *Client) GetDefaultCredentials(
+	ctx context.Context,
+) (login, password string, err error) {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.GetDefaultCredentials",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"get_default_credentials"),
+		))
+	defer span.End()
+
 	kv2Path := fmt.Sprintf("%s/default", c.vaultSecretPath)
 
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
 		if isVaultNotFoundError(err) {
-			return "", "", fmt.Errorf("default credentials at path %s: %w", kv2Path, ErrSecretNotFound)
+			notFoundErr := fmt.Errorf(
+				"default credentials at path %s: %w",
+				kv2Path, ErrSecretNotFound)
+			telemetry.RecordError(span, notFoundErr)
+			return "", "", notFoundErr
 		}
-		return "", "", fmt.Errorf("failed to read default credentials from Vault: %w", err)
+		readErr := fmt.Errorf(
+			"failed to read default credentials from Vault: %w", err)
+		telemetry.RecordError(span, readErr)
+		return "", "", readErr
 	}
 
 	if secret == nil || secret.Data == nil {
-		return "", "", fmt.Errorf("default credentials at path %s: %w", kv2Path, ErrSecretNotFound)
+		notFoundErr := fmt.Errorf(
+			"default credentials at path %s: %w",
+			kv2Path, ErrSecretNotFound)
+		telemetry.RecordError(span, notFoundErr)
+		return "", "", notFoundErr
 	}
 
 	if u, ok := secret.Data["login"].(string); ok {
@@ -170,23 +231,43 @@ func (c *Client) GetDefaultCredentials(ctx context.Context) (login, password str
 	}
 
 	if login == "" || password == "" {
-		return "", "", fmt.Errorf("credentials not found in default secret at path: %s", kv2Path)
+		credErr := fmt.Errorf(
+			"credentials not found in default secret at path: %s",
+			kv2Path)
+		telemetry.RecordError(span, credErr)
+		return "", "", credErr
 	}
 
 	return login, password, nil
 }
 
 // StorePostgresqlCredentials stores PostgreSQL instance admin credentials in Vault KV store
-func (c *Client) StorePostgresqlCredentials(ctx context.Context, postgresqlID, login, password string) error {
+func (c *Client) StorePostgresqlCredentials(
+	ctx context.Context, postgresqlID, login, password string,
+) error {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.StorePostgresqlCredentials",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID, postgresqlID),
+			attribute.String(telemetry.AttrOperation,
+				"store_postgresql_credentials"),
+		))
+	defer span.End()
+
 	data := map[string]interface{}{
 		"login":    login,
 		"password": password,
 	}
 
-	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
+	kv2Path := fmt.Sprintf(
+		"%s/%s/instance_admin", c.vaultSecretPath, postgresqlID,
+	)
 	_, err := c.client.KVv2(c.vaultMountPoint).Put(ctx, kv2Path, data)
 	if err != nil {
-		return fmt.Errorf("failed to store instance admin credentials in Vault: %w", err)
+		telemetry.RecordError(span, err)
+		return fmt.Errorf(
+			"failed to store instance admin credentials in Vault: %w",
+			err)
 	}
 
 	return nil
@@ -195,23 +276,49 @@ func (c *Client) StorePostgresqlCredentials(ctx context.Context, postgresqlID, l
 // GetInstanceAdminNewPassword retrieves the new_password field from instance admin secret
 // Returns empty string and nil error if the field doesn't exist (no rotation needed)
 // Returns error only if Vault is unavailable or the secret itself doesn't exist
-func (c *Client) GetInstanceAdminNewPassword(ctx context.Context, postgresqlID string) (string, error) {
-	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
+func (c *Client) GetInstanceAdminNewPassword(
+	ctx context.Context, postgresqlID string,
+) (string, error) {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.GetInstanceAdminNewPassword",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID, postgresqlID),
+			attribute.String(telemetry.AttrOperation,
+				"get_instance_admin_new_password"),
+		))
+	defer span.End()
+
+	kv2Path := fmt.Sprintf(
+		"%s/%s/instance_admin", c.vaultSecretPath, postgresqlID,
+	)
 
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
 		if isVaultNotFoundError(err) {
-			return "", fmt.Errorf("instance admin secret at path %s: %w", kv2Path, ErrSecretNotFound)
+			notFoundErr := fmt.Errorf(
+				"instance admin secret at path %s: %w",
+				kv2Path, ErrSecretNotFound)
+			telemetry.RecordError(span, notFoundErr)
+			return "", notFoundErr
 		}
-		return "", fmt.Errorf("failed to read instance admin secret from Vault: %w", err)
+		readErr := fmt.Errorf(
+			"failed to read instance admin secret from Vault: %w",
+			err)
+		telemetry.RecordError(span, readErr)
+		return "", readErr
 	}
 
 	if secret == nil || secret.Data == nil {
-		return "", fmt.Errorf("instance admin secret at path %s: %w", kv2Path, ErrSecretNotFound)
+		notFoundErr := fmt.Errorf(
+			"instance admin secret at path %s: %w",
+			kv2Path, ErrSecretNotFound)
+		telemetry.RecordError(span, notFoundErr)
+		return "", notFoundErr
 	}
 
 	// new_password is optional - return empty string if not present
-	if newPass, ok := secret.Data["new_password"].(string); ok && newPass != "" {
+	if newPass, ok := secret.Data["new_password"].(string); ok &&
+		newPass != "" {
 		return newPass, nil
 	}
 
@@ -220,22 +327,46 @@ func (c *Client) GetInstanceAdminNewPassword(ctx context.Context, postgresqlID s
 
 // RotateInstanceAdminPassword atomically rotates the instance admin password in Vault
 // It reads the current login, then writes login + new password (removing new_password field)
-func (c *Client) RotateInstanceAdminPassword(ctx context.Context, postgresqlID, newPassword string) error {
-	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
+func (c *Client) RotateInstanceAdminPassword(
+	ctx context.Context, postgresqlID, newPassword string,
+) error {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.RotateInstanceAdminPassword",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID, postgresqlID),
+			attribute.String(telemetry.AttrOperation,
+				"rotate_instance_admin_password"),
+		))
+	defer span.End()
+
+	kv2Path := fmt.Sprintf(
+		"%s/%s/instance_admin", c.vaultSecretPath, postgresqlID,
+	)
 
 	// Read current secret to preserve the login
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
-		return fmt.Errorf("failed to read instance admin secret for rotation: %w", err)
+		telemetry.RecordError(span, err)
+		return fmt.Errorf(
+			"failed to read instance admin secret for rotation: %w",
+			err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return fmt.Errorf("instance admin secret not found for rotation at path: %s", kv2Path)
+		rotErr := fmt.Errorf(
+			"instance admin secret not found for rotation at path: %s",
+			kv2Path)
+		telemetry.RecordError(span, rotErr)
+		return rotErr
 	}
 
 	login, ok := secret.Data["login"].(string)
 	if !ok || login == "" {
-		return fmt.Errorf("login not found in instance admin secret at path: %s", kv2Path)
+		loginErr := fmt.Errorf(
+			"login not found in instance admin secret at path: %s",
+			kv2Path)
+		telemetry.RecordError(span, loginErr)
+		return loginErr
 	}
 
 	// Write back with updated password and no new_password field
@@ -246,7 +377,10 @@ func (c *Client) RotateInstanceAdminPassword(ctx context.Context, postgresqlID, 
 
 	_, err = c.client.KVv2(c.vaultMountPoint).Put(ctx, kv2Path, data)
 	if err != nil {
-		return fmt.Errorf("failed to rotate instance admin password in Vault: %w", err)
+		telemetry.RecordError(span, err)
+		return fmt.Errorf(
+			"failed to rotate instance admin password in Vault: %w",
+			err)
 	}
 
 	return nil
@@ -254,17 +388,35 @@ func (c *Client) RotateInstanceAdminPassword(ctx context.Context, postgresqlID, 
 
 // GetPostgresqlUserCredentials retrieves PostgreSQL credentials from Vault KV store
 func (c *Client) GetPostgresqlUserCredentials(
-	ctx context.Context, postgresqlID, username string) (password string, err error) {
-	kv2Path := fmt.Sprintf("%s/%s/%s", c.vaultSecretPath, postgresqlID, username)
+	ctx context.Context, postgresqlID, username string,
+) (password string, err error) {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.GetPostgresqlUserCredentials",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID, postgresqlID),
+			attribute.String(telemetry.AttrUsername, username),
+			attribute.String(telemetry.AttrOperation,
+				"get_postgresql_user_credentials"),
+		))
+	defer span.End()
+
+	kv2Path := fmt.Sprintf(
+		"%s/%s/%s", c.vaultSecretPath, postgresqlID, username,
+	)
 
 	// Use KVv2 to read the secret
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
-		return "", fmt.Errorf("failed to read secret from Vault: %w", err)
+		telemetry.RecordError(span, err)
+		return "", fmt.Errorf(
+			"failed to read secret from Vault: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return "", fmt.Errorf("secret not found at path: %s", kv2Path)
+		notFoundErr := fmt.Errorf(
+			"secret not found at path: %s", kv2Path)
+		telemetry.RecordError(span, notFoundErr)
+		return "", notFoundErr
 	}
 
 	if p, ok := secret.Data["password"].(string); ok {
@@ -272,27 +424,43 @@ func (c *Client) GetPostgresqlUserCredentials(
 	}
 
 	if password == "" {
-		return "", fmt.Errorf("credentials not found in secret at path: %s", kv2Path)
+		credErr := fmt.Errorf(
+			"credentials not found in secret at path: %s", kv2Path)
+		telemetry.RecordError(span, credErr)
+		return "", credErr
 	}
 
 	return password, nil
 }
 
 // StorePostgresqlUserCredentials stores PostgreSQL user credentials in Vault KV store
-func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlID, username, password string) error {
+func (c *Client) StorePostgresqlUserCredentials(
+	ctx context.Context,
+	postgresqlID, username, password string,
+) error {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.StorePostgresqlUserCredentials",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID, postgresqlID),
+			attribute.String(telemetry.AttrUsername, username),
+			attribute.String(telemetry.AttrOperation,
+				"store_postgresql_user_credentials"),
+		))
+	defer span.End()
+
 	// Prepare the data to store
 	data := map[string]interface{}{
 		"password": password,
 	}
 
-	// Write to KV v2 (if using KV v2, the path should be secret/data/{postgresqlID})
-	// For KV v1, use the path as-is
-	// Try KV v2 first (most common)
-	kv2Path := fmt.Sprintf("%s/%s/%s", c.vaultSecretPath, postgresqlID, username)
+	// Write to KV v2 (most common)
+	kv2Path := fmt.Sprintf(
+		"%s/%s/%s", c.vaultSecretPath, postgresqlID, username,
+	)
 	_, err := c.client.KVv2(c.vaultMountPoint).Put(ctx, kv2Path, data)
 
 	if err != nil {
-		// If KV v2 fails, try KV v1
+		telemetry.RecordError(span, err)
 		return err
 	}
 
@@ -313,6 +481,16 @@ func (c *Client) IssueCertificate(
 	ctx context.Context, mountPath, roleName, commonName string,
 	altNames []string, ipSANs []string, ttl string,
 ) (*PKICertificate, error) {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.IssueCertificate",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"issue_certificate"),
+			attribute.String("vault.pki.role", roleName),
+			attribute.String("vault.pki.common_name", commonName),
+		))
+	defer span.End()
+
 	path := fmt.Sprintf("%s/issue/%s", mountPath, roleName)
 
 	data := map[string]interface{}{
@@ -328,17 +506,26 @@ func (c *Client) IssueCertificate(
 
 	secret, err := c.client.Logical().WriteWithContext(ctx, path, data)
 	if err != nil {
+		telemetry.RecordError(span, err)
 		return nil, fmt.Errorf(
 			"failed to issue certificate from Vault PKI: %w", err,
 		)
 	}
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf(
+		emptyErr := fmt.Errorf(
 			"empty response from Vault PKI at path: %s", path,
 		)
+		telemetry.RecordError(span, emptyErr)
+		return nil, emptyErr
 	}
 
-	return parsePKICertificateResponse(secret.Data, path)
+	result, parseErr := parsePKICertificateResponse(
+		secret.Data, path,
+	)
+	if parseErr != nil {
+		telemetry.RecordError(span, parseErr)
+	}
+	return result, parseErr
 }
 
 // parsePKICertificateResponse parses the Vault PKI response data
@@ -391,26 +578,40 @@ func parsePKICertificateResponse(
 func (c *Client) GetCACertificate(
 	ctx context.Context, mountPath string,
 ) (string, error) {
+	ctx, span := otel.Tracer("vault").Start(ctx,
+		"vault.GetCACertificate",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"get_ca_certificate"),
+			attribute.String("vault.pki.mount_path", mountPath),
+		))
+	defer span.End()
+
 	path := fmt.Sprintf("%s/cert/ca", mountPath)
 
 	secret, err := c.client.Logical().ReadWithContext(ctx, path)
 	if err != nil {
+		telemetry.RecordError(span, err)
 		return "", fmt.Errorf(
 			"failed to read CA certificate from Vault PKI: %w", err,
 		)
 	}
 	if secret == nil || secret.Data == nil {
-		return "", fmt.Errorf(
+		emptyErr := fmt.Errorf(
 			"empty CA response from Vault PKI at path: %s", path,
 		)
+		telemetry.RecordError(span, emptyErr)
+		return "", emptyErr
 	}
 
 	certVal, ok := secret.Data["certificate"].(string)
 	if !ok || certVal == "" {
-		return "", fmt.Errorf(
+		notFoundErr := fmt.Errorf(
 			"CA certificate not found in Vault PKI response at: %s",
 			path,
 		)
+		telemetry.RecordError(span, notFoundErr)
+		return "", notFoundErr
 	}
 
 	return certVal, nil

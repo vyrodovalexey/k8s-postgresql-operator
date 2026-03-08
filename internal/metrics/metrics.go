@@ -95,6 +95,26 @@ var (
 		},
 		[]string{"result"}, // "success", "pg_failed", "vault_failed"
 	)
+
+	// CertificateExpirySeconds is the time in seconds until the webhook
+	// TLS certificate expires. Labels: source (vault_pki, self_signed).
+	CertificateExpirySeconds = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "postgresql_operator_certificate_expiry_seconds",
+			Help: "Seconds until the webhook TLS certificate expires",
+		},
+		[]string{"source"},
+	)
+
+	// CertificateRenewalTotal tracks certificate renewal attempts.
+	// Labels: result (success, error).
+	CertificateRenewalTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_certificate_renewal_total",
+			Help: "Total number of certificate renewal attempts by result",
+		},
+		[]string{"result"},
+	)
 )
 
 func init() {
@@ -107,6 +127,8 @@ func init() {
 	metrics.Registry.MustRegister(ReconcileTotal)
 	metrics.Registry.MustRegister(VaultCredentialResolution)
 	metrics.Registry.MustRegister(VaultPasswordRotation)
+	metrics.Registry.MustRegister(CertificateExpirySeconds)
+	metrics.Registry.MustRegister(CertificateRenewalTotal)
 }
 
 // UpdatePostgresqlCount updates the total number of PostgreSQL instances
@@ -159,4 +181,14 @@ func IncVaultCredentialResolution(source string) {
 // IncVaultPasswordRotation increments the Vault password rotation counter for the given result
 func IncVaultPasswordRotation(result string) {
 	VaultPasswordRotation.WithLabelValues(result).Inc()
+}
+
+// SetCertificateExpiry sets the certificate expiry time in seconds for the given source
+func SetCertificateExpiry(source string, secondsUntilExpiry float64) {
+	CertificateExpirySeconds.WithLabelValues(source).Set(secondsUntilExpiry)
+}
+
+// IncCertificateRenewal increments the certificate renewal counter for the given result
+func IncCertificateRenewal(result string) {
+	CertificateRenewalTotal.WithLabelValues(result).Inc()
 }

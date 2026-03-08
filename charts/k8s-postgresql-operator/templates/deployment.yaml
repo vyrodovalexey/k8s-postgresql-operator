@@ -78,6 +78,10 @@ spec:
         - --vault-pki-ttl={{ .Values.vaultPKI.ttl }}
         - --vault-pki-renewal-buffer={{ .Values.vaultPKI.renewalBuffer }}
         {{- end }}
+        {{- if .Values.tracing.enabled }}
+        - --otlp-endpoint={{ .Values.tracing.endpoint }}
+        - --otlp-insecure={{ .Values.tracing.insecure }}
+        {{- end }}
         env:
         - name: VAULT_ADDR
           value: {{ .Values.vault.addr | quote }}
@@ -85,6 +89,12 @@ spec:
           value: {{ .Values.vault.role | quote }}
         - name: ENABLE_LEADER_ELECTION
           value: {{ .Values.operator.enableLeaderElection | quote }}
+        {{- if .Values.tracing.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ .Values.tracing.endpoint | quote }}
+        - name: OTEL_EXPORTER_OTLP_INSECURE
+          value: {{ .Values.tracing.insecure | quote }}
+        {{- end }}
         ports:
         - name: https
           containerPort: {{ .Values.webhook.serverPort }}

@@ -35,6 +35,8 @@ const (
 	defaultVaultPKITTL                     = "720h"
 	defaultVaultPKIRenewalBuffer           = "24h"
 	defaultMetricsCollectionIntervalSecs   = 30
+	defaultOTLPEndpoint                    = ""
+	defaultOTLPInsecure                    = true
 )
 
 // Config Структура для хранения конфигурации
@@ -70,6 +72,8 @@ type Config struct {
 	VaultPKITTL                     string `env:"VAULT_PKI_TTL"`
 	VaultPKIRenewalBuffer           string `env:"VAULT_PKI_RENEWAL_BUFFER"`
 	MetricsCollectionIntervalSecs   int    `env:"METRICS_COLLECTION_INTERVAL_SECS"`
+	OTLPEndpoint                    string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	OTLPInsecure                    bool   `env:"OTEL_EXPORTER_OTLP_INSECURE"`
 }
 
 // New Функция для создания нового экземпляра конфигурации
@@ -106,6 +110,8 @@ func New() *Config {
 		defaultVaultPKITTL,
 		defaultVaultPKIRenewalBuffer,
 		defaultMetricsCollectionIntervalSecs,
+		defaultOTLPEndpoint,
+		defaultOTLPInsecure,
 	}
 }
 

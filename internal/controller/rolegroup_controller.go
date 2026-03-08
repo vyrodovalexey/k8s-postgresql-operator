@@ -21,14 +21,18 @@ import (
 	"fmt"
 	"time"
 
-	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
-	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
-	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
+	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 )
 
 // RoleGroupReconciler reconciles a RoleGroup object
@@ -46,6 +50,16 @@ type RoleGroupReconciler struct {
 func (r *RoleGroupReconciler) Reconcile(
 	ctx context.Context, req ctrl.Request,
 ) (ctrl.Result, error) {
+	ctx, span := otel.Tracer("controller").Start(ctx,
+		"RoleGroupReconciler.Reconcile",
+		trace.WithAttributes(
+			attribute.String("controller", "rolegroup"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	startTime := time.Now()
 	metrics.IncReconcileTotal("rolegroup")
 	defer func() {

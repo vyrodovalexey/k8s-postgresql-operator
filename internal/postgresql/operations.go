@@ -24,14 +24,31 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/errors"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 )
 
 // CreateOrUpdateDatabase creates or updates a PostgreSQL database
 func CreateOrUpdateDatabase(
-	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode,
-	databaseName, owner, schemaName, templateDatabase string) error {
+	ctx context.Context, host string, port int32,
+	adminUser, adminPassword, sslMode,
+	databaseName, owner, schemaName, templateDatabase string,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.CreateOrUpdateDatabase",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String(telemetry.AttrDatabase, databaseName),
+			attribute.String(telemetry.AttrOperation,
+				"create_or_update_database"),
+		))
+	defer span.End()
+	_ = ctx // ctx is used for span propagation
 	// Connect to PostgreSQL as admin user
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
 		host, port, adminUser, adminPassword, DefaultDB, sslMode)
@@ -132,7 +149,19 @@ func CreateOrUpdateDatabase(
 
 // CreateOrUpdateUser creates or updates a PostgreSQL user
 func CreateOrUpdateUser(
-	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, username, password string) error {
+	ctx context.Context, host string, port int32,
+	adminUser, adminPassword, sslMode, username, password string,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.CreateOrUpdateUser",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String(telemetry.AttrUsername, username),
+			attribute.String(telemetry.AttrOperation,
+				"create_or_update_user"),
+		))
+	defer span.End()
+	_ = ctx // ctx is used for span propagation
 	// Connect to PostgreSQL as admin user
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
 		host, port, adminUser, adminPassword, DefaultDB, sslMode)
@@ -278,6 +307,16 @@ func CreateOrUpdateRoleGroup(
 	adminUser, adminPassword, sslMode,
 	groupRole string, memberRoles []string,
 ) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.CreateOrUpdateRoleGroup",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String("db.role_group", groupRole),
+			attribute.String(telemetry.AttrOperation,
+				"create_or_update_role_group"),
+		))
+	defer span.End()
+	_ = ctx // ctx is used for span propagation
 	connStr := fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
 		host, port, adminUser, adminPassword, DefaultDB, sslMode)
@@ -328,8 +367,21 @@ func CreateOrUpdateRoleGroup(
 
 // CreateOrUpdateSchema creates or updates a PostgreSQL schema
 func CreateOrUpdateSchema(
-	ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode,
-	databaseName, schemaName, owner string) error {
+	ctx context.Context, host string, port int32,
+	adminUser, adminPassword, sslMode,
+	databaseName, schemaName, owner string,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.CreateOrUpdateSchema",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String(telemetry.AttrDatabase, databaseName),
+			attribute.String("db.schema", schemaName),
+			attribute.String(telemetry.AttrOperation,
+				"create_or_update_schema"),
+		))
+	defer span.End()
+	_ = ctx // ctx is used for span propagation
 	// Connect to the specific database
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
 		host, port, adminUser, adminPassword, databaseName, sslMode)
@@ -463,6 +515,15 @@ func ApplyGrants(
 	grants []instancev1alpha1.GrantItem,
 	defaultPrivileges []instancev1alpha1.DefaultPrivilegeItem,
 ) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.ApplyGrants",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String(telemetry.AttrDatabase, databaseName),
+			attribute.String("db.role", roleName),
+			attribute.String(telemetry.AttrOperation, "apply_grants"),
+		))
+	defer span.End()
 	connCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 

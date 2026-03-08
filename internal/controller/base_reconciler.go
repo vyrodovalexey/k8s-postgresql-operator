@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -28,10 +31,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
-
-	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -140,6 +143,15 @@ type connectionInfo struct {
 func (r *BaseReconcilerConfig) resolvePostgresqlConnection(
 	ctx context.Context, postgresqlID string,
 ) (info *connectionInfo, reason string, message string) {
+	ctx, span := otel.Tracer("controller").Start(ctx,
+		"BaseReconciler.resolvePostgresqlConnection",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID,
+				postgresqlID),
+			attribute.String(telemetry.AttrOperation,
+				"resolve_postgresql_connection"),
+		))
+	defer span.End()
 	postgresql, err := k8sclient.FindPostgresqlByID(
 		ctx, r.Client, postgresqlID,
 	)
@@ -190,6 +202,15 @@ func (r *BaseReconcilerConfig) resolvePostgresqlConnection(
 func (r *BaseReconcilerConfig) resolveAdminCredentials(
 	ctx context.Context, info *connectionInfo,
 ) error {
+	ctx, span := otel.Tracer("controller").Start(ctx,
+		"BaseReconciler.resolveAdminCredentials",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID,
+				info.ExternalInstance.PostgresqlID),
+			attribute.String(telemetry.AttrOperation,
+				"resolve_admin_credentials"),
+		))
+	defer span.End()
 	if r.VaultClient == nil {
 		r.Log.Infow("Vault client not available")
 		return nil

@@ -23,6 +23,8 @@ VAULT_PKI_MOUNT_PATH="${VAULT_PKI_MOUNT_PATH:-pki}"
 VAULT_PKI_ROLE="${VAULT_PKI_ROLE:-webhook-cert}"
 VAULT_PKI_TTL="${VAULT_PKI_TTL:-720h}"
 VAULT_PKI_RENEWAL_BUFFER="${VAULT_PKI_RENEWAL_BUFFER:-24h}"
+OTEL_ENDPOINT="${OTEL_ENDPOINT:-otel-collector.monitoring.svc.cluster.local:4317}"
+OTEL_INSECURE="${OTEL_INSECURE:-true}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-120s}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
 
@@ -125,6 +127,9 @@ deploy_helm() {
         --set vaultPKI.role="${VAULT_PKI_ROLE}" \
         --set vaultPKI.ttl="${VAULT_PKI_TTL}" \
         --set vaultPKI.renewalBuffer="${VAULT_PKI_RENEWAL_BUFFER}" \
+        --set tracing.enabled=true \
+        --set tracing.endpoint="${OTEL_ENDPOINT}" \
+        --set tracing.insecure="${OTEL_INSECURE}" \
         --wait \
         --timeout "${WAIT_TIMEOUT}"
 
@@ -195,6 +200,7 @@ main() {
     info "Vault addr:    ${VAULT_ADDR}"
     info "Vault role:    ${VAULT_ROLE}"
     info "Vault PKI:     enabled=${VAULT_PKI_ENABLED}, mount=${VAULT_PKI_MOUNT_PATH}, role=${VAULT_PKI_ROLE}"
+    info "OTLP:          endpoint=${OTEL_ENDPOINT}, insecure=${OTEL_INSECURE}"
     info "Chart path:    ${CHART_PATH}"
     echo
 

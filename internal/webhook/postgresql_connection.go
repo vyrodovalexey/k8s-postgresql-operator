@@ -20,10 +20,14 @@ import (
 	"context"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -34,6 +38,22 @@ func testPostgreSQLConnection(
 	vaultClient *vault.Client,
 	log *zap.SugaredLogger,
 	retries int,
-	retryTimeout time.Duration) error {
-	return pg.TestConnectionFromPostgresql(ctx, postgresqlObj, vaultClient, log, retries, retryTimeout)
+	retryTimeout time.Duration,
+) error {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"webhook.testPostgreSQLConnection",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"test_postgresql_connection"),
+		))
+	defer span.End()
+
+	err := pg.TestConnectionFromPostgresql(
+		ctx, postgresqlObj, vaultClient,
+		log, retries, retryTimeout,
+	)
+	if err != nil {
+		telemetry.RecordError(span, err)
+	}
+	return err
 }

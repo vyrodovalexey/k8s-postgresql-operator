@@ -24,7 +24,12 @@ import (
 	"math/big"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 )
 
 // maxRetryDelay is the upper bound for exponential backoff delay
@@ -49,8 +54,19 @@ func calculateBackoff(baseDelay time.Duration, attempt int, maxDelay time.Durati
 
 // ExecuteOperationWithRetry executes a PostgreSQL operation with retry logic
 func ExecuteOperationWithRetry(
-	ctx context.Context, operation func() error, log *zap.SugaredLogger,
-	retries int, retryDelay time.Duration, operationName string) error {
+	ctx context.Context, operation func() error,
+	log *zap.SugaredLogger,
+	retries int, retryDelay time.Duration,
+	operationName string,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.ExecuteOperationWithRetry",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation, operationName),
+			attribute.Int("retry.max_attempts", retries),
+		))
+	defer span.End()
+	_ = ctx // ctx is used for span propagation
 	var lastErr error
 	for attempt := 1; attempt <= retries; attempt++ {
 		log.Debugw("Attempting PostgreSQL operation",
@@ -79,5 +95,9 @@ func ExecuteOperationWithRetry(
 	}
 
 	// All retries failed
-	return fmt.Errorf("postgreSQL operation %s failed after %d attempts: %w", operationName, retries, lastErr)
+	retryErr := fmt.Errorf(
+		"postgreSQL operation %s failed after %d attempts: %w",
+		operationName, retries, lastErr)
+	telemetry.RecordError(span, retryErr)
+	return retryErr
 }

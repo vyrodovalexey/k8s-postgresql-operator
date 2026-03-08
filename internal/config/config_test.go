@@ -52,6 +52,8 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, defaultPostgresqlConnectionTimeoutSecs, cfg.PostgresqlConnectionTimeoutSecs)
 	assert.Equal(t, defaultVaultAvailabilityRetries, cfg.VaultAvailabilityRetries)
 	assert.Equal(t, defaultVaultAvailabilityRetryDelaySecs, cfg.VaultAvailabilityRetryDelaySecs)
+	assert.Equal(t, defaultOTLPEndpoint, cfg.OTLPEndpoint)
+	assert.Equal(t, defaultOTLPInsecure, cfg.OTLPInsecure)
 }
 
 func TestNew_MultipleInstances(t *testing.T) {
@@ -94,6 +96,8 @@ func TestConfig_DefaultValues(t *testing.T) {
 	assert.Equal(t, 3, cfg.VaultAvailabilityRetries)
 	assert.Equal(t, 10, cfg.VaultAvailabilityRetryDelaySecs)
 	assert.Equal(t, 10*time.Second, cfg.VaultAvailabilityRetryDelay())
+	assert.Equal(t, "", cfg.OTLPEndpoint)
+	assert.True(t, cfg.OTLPInsecure)
 }
 
 func TestSetupWebhooksList_DefaultConfig(t *testing.T) {

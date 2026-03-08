@@ -27,8 +27,13 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -91,6 +96,15 @@ func NewVaultPKIManager(
 func (m *VaultPKIManager) IssueCertificateAndWriteToDisk(
 	ctx context.Context,
 ) error {
+	ctx, span := otel.Tracer("cert").Start(ctx,
+		"cert.IssueCertificateAndWriteToDisk",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"issue_certificate_and_write_to_disk"),
+			attribute.String("cert.service_name", m.serviceName),
+		))
+	defer span.End()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -105,21 +119,42 @@ func (m *VaultPKIManager) IssueCertificateAndWriteToDisk(
 		altNames, ipSANs, m.ttl,
 	)
 	if err != nil {
-		return fmt.Errorf(
+		issueErr := fmt.Errorf(
 			"failed to issue certificate from Vault PKI: %w", err,
 		)
+		telemetry.RecordError(span, issueErr)
+		return issueErr
 	}
 
 	if err := os.MkdirAll(m.certDir, 0o750); err != nil {
-		return fmt.Errorf(
-			"failed to create cert directory %s: %w", m.certDir, err,
+		mkdirErr := fmt.Errorf(
+			"failed to create cert directory %s: %w",
+			m.certDir, err,
 		)
+		telemetry.RecordError(span, mkdirErr)
+		return mkdirErr
 	}
 
 	if err := writePKICertFiles(
 		pkiCert, m.certPath, m.keyPath, m.caPath,
 	); err != nil {
+		telemetry.RecordError(span, err)
 		return err
+	}
+
+	// Update certificate expiry metric
+	block, _ := pem.Decode([]byte(pkiCert.Certificate))
+	if block != nil {
+		if parsedCert, parseErr := x509.ParseCertificate(
+			block.Bytes,
+		); parseErr == nil {
+			secondsUntilExpiry := time.Until(
+				parsedCert.NotAfter,
+			).Seconds()
+			metrics.SetCertificateExpiry(
+				"vault_pki", secondsUntilExpiry,
+			)
+		}
 	}
 
 	m.log.Infow("Vault PKI certificate issued and written to disk",
@@ -145,20 +180,17 @@ func buildAltNames(serviceName, namespace string) []string {
 	}
 }
 
-// writePKICertFiles writes certificate, key, and CA chain to disk
+// writePKICertFiles writes certificate, key, and CA chain to disk.
+// The key is written BEFORE the cert to avoid a race condition with
+// controller-runtime's certwatcher: it watches the cert file and
+// reloads the cert+key pair on change. If the cert is written first,
+// the watcher may read the new cert with the old key, causing a
+// "private key does not match public key" error.
 func writePKICertFiles(
 	pkiCert *vault.PKICertificate,
 	certPath, keyPath, caPath string,
 ) error {
-	//nolint:gosec // microservices approach - cert files need to be readable
-	if err := os.WriteFile(
-		certPath, []byte(pkiCert.Certificate), 0o644,
-	); err != nil {
-		return fmt.Errorf(
-			"failed to write certificate to %s: %w", certPath, err,
-		)
-	}
-
+	// 1. Write private key first (certwatcher does NOT watch this)
 	if err := os.WriteFile(
 		keyPath, []byte(pkiCert.PrivateKey), 0o600,
 	); err != nil {
@@ -167,6 +199,7 @@ func writePKICertFiles(
 		)
 	}
 
+	// 2. Write CA chain
 	caChainPEM := strings.Join(pkiCert.CAChain, "\n")
 	//nolint:gosec // microservices approach - CA cert needs to be readable
 	if err := os.WriteFile(
@@ -174,6 +207,16 @@ func writePKICertFiles(
 	); err != nil {
 		return fmt.Errorf(
 			"failed to write CA chain to %s: %w", caPath, err,
+		)
+	}
+
+	// 3. Write certificate LAST (certwatcher triggers reload on this)
+	//nolint:gosec // microservices approach - cert files need to be readable
+	if err := os.WriteFile(
+		certPath, []byte(pkiCert.Certificate), 0o644,
+	); err != nil {
+		return fmt.Errorf(
+			"failed to write certificate to %s: %w", certPath, err,
 		)
 	}
 
@@ -185,8 +228,17 @@ func writePKICertFiles(
 func (m *VaultPKIManager) GetCACertificatePEM(
 	ctx context.Context,
 ) ([]byte, error) {
+	ctx, span := otel.Tracer("cert").Start(ctx,
+		"cert.GetCACertificatePEM",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"get_ca_certificate_pem"),
+		))
+	defer span.End()
+
 	caCert, err := m.vaultClient.GetCACertificate(ctx, m.mountPath)
 	if err != nil {
+		telemetry.RecordError(span, err)
 		return nil, fmt.Errorf(
 			"failed to get CA certificate from Vault PKI: %w", err,
 		)
@@ -204,10 +256,20 @@ func (m *VaultPKIManager) StartRenewal(ctx context.Context) {
 // renewalLoop is the main renewal loop that runs in a goroutine
 func (m *VaultPKIManager) renewalLoop(ctx context.Context) {
 	for {
+		_, span := otel.Tracer("cert").Start(ctx,
+			"cert.renewalLoop.iteration",
+			trace.WithAttributes(
+				attribute.String(telemetry.AttrOperation,
+					"certificate_renewal_check"),
+			))
+
 		renewAt, err := m.calculateRenewalTime()
 		if err != nil {
+			telemetry.RecordError(span, err)
+			span.End()
 			m.log.Errorw(
-				"Failed to calculate renewal time, retrying in 1m",
+				"Failed to calculate renewal time, "+
+					"retrying in 1m",
 				"error", err,
 			)
 			if m.waitOrStop(ctx, time.Minute) {
@@ -221,6 +283,8 @@ func (m *VaultPKIManager) renewalLoop(ctx context.Context) {
 			sleepDuration = time.Minute
 		}
 
+		span.End()
+
 		m.log.Infow("Vault PKI certificate renewal scheduled",
 			"renew-at", renewAt.Format(time.RFC3339),
 			"sleep-duration", sleepDuration.String(),
@@ -232,11 +296,13 @@ func (m *VaultPKIManager) renewalLoop(ctx context.Context) {
 
 		m.log.Infow("Renewing Vault PKI certificate")
 		if err := m.IssueCertificateAndWriteToDisk(ctx); err != nil {
+			metrics.IncCertificateRenewal("error")
 			m.log.Errorw(
 				"Failed to renew Vault PKI certificate",
 				"error", err,
 			)
 		} else {
+			metrics.IncCertificateRenewal("success")
 			m.log.Infow(
 				"Vault PKI certificate renewed successfully",
 			)
@@ -293,6 +359,11 @@ func (m *VaultPKIManager) calculateRenewalTime() (time.Time, error) {
 	}
 
 	renewAt := parsedCert.NotAfter.Add(-m.renewalBuffer)
+
+	// Update certificate expiry metric
+	secondsUntilExpiry := time.Until(parsedCert.NotAfter).Seconds()
+	metrics.SetCertificateExpiry("vault_pki", secondsUntilExpiry)
+
 	return renewAt, nil
 }
 

@@ -71,6 +71,10 @@ func ConfigParser(cfg *config.Config) {
 		"Time before expiry to renew Vault PKI certificates (default: 24h)")
 	flag.IntVar(&cfg.MetricsCollectionIntervalSecs, "metrics-collection-interval-secs",
 		cfg.MetricsCollectionIntervalSecs, "Interval in seconds for periodic metrics collection (default: 30)")
+	flag.StringVar(&cfg.OTLPEndpoint, "otlp-endpoint", cfg.OTLPEndpoint,
+		"OTLP gRPC endpoint for trace export (e.g., otel-collector:4317). Empty disables tracing")
+	flag.BoolVar(&cfg.OTLPInsecure, "otlp-insecure", cfg.OTLPInsecure,
+		"Use insecure connection for OTLP exporter (default: true)")
 	flag.Parse() // Парсим флаги командной строки
 
 	// Парсим переменные окружения и сохраняем их в конфигурацию и перезаписывая существующие

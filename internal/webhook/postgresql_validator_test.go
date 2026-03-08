@@ -329,7 +329,7 @@ func TestPostgresqlValidator_Handle_DuplicatePostgresqlID(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -390,7 +390,7 @@ func TestPostgresqlValidator_Handle_NoDuplicate(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.True(t, response.Allowed)
@@ -452,7 +452,7 @@ func TestPostgresqlValidator_Handle_UpdateSameResource(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
 
 	response := validator.Handle(context.Background(), req)
 	// Should be allowed because it's the same resource being updated
@@ -527,7 +527,7 @@ func TestPostgresqlValidator_Handle_ListError(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -640,7 +640,7 @@ func TestPostgresqlValidator_Handle_ConnectionFailed(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)

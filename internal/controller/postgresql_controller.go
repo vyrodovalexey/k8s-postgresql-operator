@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -50,6 +53,16 @@ type PostgresqlReconciler struct {
 //nolint:lll // kubebuilder directive cannot be split
 
 func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, span := otel.Tracer("controller").Start(ctx,
+		"PostgresqlReconciler.Reconcile",
+		trace.WithAttributes(
+			attribute.String("controller", "postgresql"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	startTime := time.Now()
 	metrics.IncReconcileTotal("postgresql")
 	defer func() {

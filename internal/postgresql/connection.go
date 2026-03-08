@@ -26,9 +26,13 @@ import (
 	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver registration for database/sql
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
@@ -115,6 +119,17 @@ func TestConnection(
 	database, username, password, sslMode string,
 	log *zap.SugaredLogger, retries int, retryTimeout time.Duration,
 ) (bool, error) {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.TestConnection",
+		trace.WithAttributes(
+			attribute.String("db.system", "postgresql"),
+			attribute.String("net.peer.name", host),
+			attribute.Int("net.peer.port", int(port)),
+			attribute.String(telemetry.AttrOperation,
+				"test_connection"),
+		))
+	defer span.End()
+
 	var lastErr error
 
 	for attempt := 1; attempt <= retries; attempt++ {
@@ -144,9 +159,12 @@ func TestConnection(
 	}
 
 	// All retries failed
-	return false, fmt.Errorf(
-		"failed to connect to PostgreSQL after %d attempts: %w", retries, lastErr,
+	connErr := fmt.Errorf(
+		"failed to connect to PostgreSQL after %d attempts: %w",
+		retries, lastErr,
 	)
+	telemetry.RecordError(span, connErr)
+	return false, connErr
 }
 
 // resolveVaultCredentials resolves credentials from Vault with fallback to default credentials.
@@ -155,6 +173,14 @@ func resolveVaultCredentials(
 	ctx context.Context, vaultClient *vault.Client,
 	postgresqlID string, log *zap.SugaredLogger,
 ) (login, password string, err error) {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.resolveVaultCredentials",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrPostgresqlID, postgresqlID),
+			attribute.String(telemetry.AttrOperation,
+				"resolve_vault_credentials"),
+		))
+	defer span.End()
 	username, password, err := vaultClient.GetPostgresqlCredentials(ctx, postgresqlID)
 	if err == nil {
 		log.Debugw("Credentials retrieved from Vault",
@@ -187,8 +213,19 @@ func resolveVaultCredentials(
 
 // TestConnectionFromPostgresql tests the connection to a PostgreSQL instance from a Postgresql CRD
 func TestConnectionFromPostgresql(
-	ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient *vault.Client,
-	log *zap.SugaredLogger, retries int, retryTimeout time.Duration) error {
+	ctx context.Context,
+	postgresql *instancev1alpha1.Postgresql,
+	vaultClient *vault.Client,
+	log *zap.SugaredLogger,
+	retries int, retryTimeout time.Duration,
+) error {
+	ctx, span := otel.Tracer("postgresql").Start(ctx,
+		"postgresql.TestConnectionFromPostgresql",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"test_connection_from_postgresql"),
+		))
+	defer span.End()
 	if postgresql.Spec.ExternalInstance == nil {
 		return fmt.Errorf("PostgreSQL instance has no external instance configuration")
 	}

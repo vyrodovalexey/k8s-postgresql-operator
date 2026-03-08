@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -35,7 +38,19 @@ type UserValidator struct {
 }
 
 // Handle handles the admission request for User resources
-func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *UserValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"UserValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "user"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var user instancev1alpha1.User
 
 	if err := v.Decoder.Decode(req, &user); err != nil {

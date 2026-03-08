@@ -31,17 +31,34 @@ import (
 	"path/filepath"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/telemetry"
 )
 
-// GenerateSelfSignedCertAndStoreInSecret generates a self-signed certificate and stores it in a Kubernetes Secret
-// Returns the secret name and paths to the certificate and key files
+// GenerateSelfSignedCertAndStoreInSecret generates a self-signed
+// certificate and stores it in a Kubernetes Secret.
+// Returns the secret name and paths to the certificate and key files.
 func GenerateSelfSignedCertAndStoreInSecret(
-	serviceName, namespace, secretName, certDir string, config *rest.Config) (
-	secretNameOut string, certPath, keyPath string, err error) {
+	serviceName, namespace, secretName, certDir string,
+	config *rest.Config,
+) (secretNameOut string, certPath, keyPath string, err error) {
+	_, span := otel.Tracer("cert").Start(
+		context.Background(),
+		"cert.GenerateSelfSignedCertAndStoreInSecret",
+		trace.WithAttributes(
+			attribute.String(telemetry.AttrOperation,
+				"generate_self_signed_cert"),
+			attribute.String("cert.service_name", serviceName),
+		))
+	defer span.End()
 	// Create cert directory if it doesn't exist
 	if err := os.MkdirAll(certDir, 0o750); err != nil {
 		return "", "", "", fmt.Errorf("failed to create cert directory: %w", err)
@@ -103,6 +120,12 @@ func GenerateSelfSignedCertAndStoreInSecret(
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to create certificate: %w", err)
 	}
+
+	// Update certificate expiry metric for self-signed cert
+	metrics.SetCertificateExpiry(
+		"self_signed",
+		time.Until(template.NotAfter).Seconds(),
+	)
 
 	// Encode certificate to PEM
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})

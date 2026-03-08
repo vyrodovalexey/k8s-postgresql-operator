@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,19 @@ type GrantValidator struct {
 }
 
 // Handle handles the admission request for Grant resources
-func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *GrantValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"GrantValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "grant"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var grant instancev1alpha1.Grant
 
 	if err := v.Decoder.Decode(req, &grant); err != nil {

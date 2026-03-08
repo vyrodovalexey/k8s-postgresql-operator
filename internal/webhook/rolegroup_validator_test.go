@@ -184,8 +184,8 @@ func TestRoleGroupValidator_Handle_DuplicateRoleGroup(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.RoleGroup")).Return(roleGroup, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(roleGroupList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(roleGroupList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -263,8 +263,8 @@ func TestRoleGroupValidator_Handle_NoDuplicate(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.RoleGroup")).Return(roleGroup, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(roleGroupList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(roleGroupList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.True(t, response.Allowed)
@@ -310,7 +310,7 @@ func TestRoleGroupValidator_Handle_PostgresqlNotFound(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.RoleGroup")).Return(roleGroup, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -450,7 +450,7 @@ func TestRoleGroupValidator_Handle_PostgresqlConnectionFailed(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.RoleGroup")).Return(roleGroup, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -512,8 +512,8 @@ func TestRoleGroupValidator_Handle_RoleGroupListError(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.RoleGroup")).Return(roleGroup, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(nil, assert.AnError)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(nil, assert.AnError)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
@@ -591,8 +591,8 @@ func TestRoleGroupValidator_Handle_UpdateSameResource(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.RoleGroup")).Return(roleGroup, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(roleGroupList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(roleGroupList, nil)
 
 	response := validator.Handle(context.Background(), req)
 	assert.True(t, response.Allowed)
@@ -634,7 +634,7 @@ func TestRoleGroupValidator_Handle_PostgresqlListError(t *testing.T) {
 	}
 
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.RoleGroup")).Return(roleGroup, nil)
-	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
+	mockClient.On("List", mock.Anything, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(nil, assert.AnError)
 
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)

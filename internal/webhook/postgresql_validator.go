@@ -21,6 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,19 @@ type PostgresqlValidator struct {
 }
 
 // Handle handles the admission request for PostgreSQL resources
-func (v *PostgresqlValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+func (v *PostgresqlValidator) Handle(
+	ctx context.Context, req admission.Request,
+) admission.Response {
+	ctx, span := otel.Tracer("webhook").Start(ctx,
+		"PostgresqlValidator.Handle",
+		trace.WithAttributes(
+			attribute.String("webhook", "postgresql"),
+			attribute.String("k8s.resource.name", req.Name),
+			attribute.String("k8s.resource.namespace",
+				req.Namespace),
+		))
+	defer span.End()
+
 	var postgresql instancev1alpha1.Postgresql
 
 	if err := v.Decoder.Decode(req, &postgresql); err != nil {
