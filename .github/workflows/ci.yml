@@ -777,14 +777,14 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@22438a435773de8c97dc0958cc0b823c45b064ac # master
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # v0.34.0
         with:
           image-ref: '${{ env.DOCKER_IMAGE }}:${{ needs.docker-build-push.outputs.image-tag }}'
           format: 'sarif'
@@ -793,12 +793,12 @@ jobs:
           vuln-type: 'os,library'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@2b983b380ce715a6c836c917154509c332c19b3a # v3
+        uses: github/codeql-action/upload-sarif@c793b717bc78562f491db7b0e93a3a178b099162 # v4.32.5
         with:
           sarif_file: 'trivy-results.sarif'
 
       - name: Run Trivy vulnerability scanner (table output)
-        uses: aquasecurity/trivy-action@22438a435773de8c97dc0958cc0b823c45b064ac # master
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # v0.34.0
         with:
           image-ref: '${{ env.DOCKER_IMAGE }}:${{ needs.docker-build-push.outputs.image-tag }}'
           format: 'table'
@@ -938,6 +938,9 @@ jobs:
             --set image.repository=k8s-postgresql-operator \
             --set image.tag=helm-test \
             --set image.pullPolicy=Never \
+            --set vault.addr="" \
+            --set vaultPKI.enabled=false \
+            --set operator.enableLeaderElection=false \
             --wait \
             --timeout 5m
 
@@ -945,13 +948,16 @@ jobs:
         run: |
           echo "==> Verifying deployment..."
           kubectl get all -n k8s-postgresql-operator-test
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=k8s-postgresql-operator -n k8s-postgresql-operator-test --timeout=120s
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=k8s-postgresql-operator \
+            -n k8s-postgresql-operator-test --timeout=120s
           echo "Deployment verification successful!"
 
       - name: Check pod logs
         run: |
           echo "==> Checking pod logs..."
-          kubectl logs -n k8s-postgresql-operator-test -l app.kubernetes.io/name=k8s-postgresql-operator --tail=50
+          kubectl logs -n k8s-postgresql-operator-test \
+            -l app.kubernetes.io/name=k8s-postgresql-operator --tail=50
 
       - name: Helm upgrade test
         run: |
@@ -961,7 +967,9 @@ jobs:
             --set image.repository=k8s-postgresql-operator \
             --set image.tag=helm-test \
             --set image.pullPolicy=Never \
-            --set replicaCount=2 \
+            --set vault.addr="" \
+            --set vaultPKI.enabled=false \
+            --set operator.enableLeaderElection=false \
             --wait \
             --timeout 5m
           kubectl get pods -n k8s-postgresql-operator-test
