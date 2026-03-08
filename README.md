@@ -85,7 +85,7 @@ The operator consists of the following components:
 
 ### Build Prerequisites
 
-- Go 1.25.7+
+- Go 1.25.8+
 - golangci-lint 2.8.0 (installed automatically via `make lint`)
 - Docker (for container builds)
 - kubectl configured to access your Kubernetes cluster
@@ -93,7 +93,7 @@ The operator consists of the following components:
 
 ### Local Development and Testing Prerequisites
 
-- Go 1.25.7+
+- Go 1.25.8+
 - Docker with Docker Compose v2
 - kubectl
 - Helm 3.0+
@@ -519,8 +519,8 @@ make test-functional
 Coverage output: `coverage/functional.out`
 
 Functional test suites:
-- `test/functional/vault_test.go` — Vault KV v2 read/write/delete operations (4 tests)
-- `test/functional/postgresql_test.go` — PostgreSQL connection, database, user, schema, role group, grant operations (7 tests)
+- `test/functional/vault_test.go` — Vault KV v2 read/write/delete operations (5 tests)
+- `test/functional/postgresql_test.go` — PostgreSQL connection, database, user, schema, role group, grant operations (8 tests)
 - `test/functional/config_test.go` — Operator configuration defaults and structure (2 tests)
 
 ### Integration Tests
@@ -561,6 +561,7 @@ make test-e2e
 Coverage output: `coverage/e2e.out`
 
 E2E test suites:
+- `test/e2e/suite_test.go` — E2E test suite setup
 - `test/e2e/postgresql_e2e_test.go` — PostgreSQL CRD reconciliation
 - `test/e2e/database_e2e_test.go` — Database CRD reconciliation
 - `test/e2e/user_e2e_test.go` — User CRD reconciliation

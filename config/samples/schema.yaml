@@ -7,6 +7,5 @@ metadata:
   name: schema-sample
 spec:
   schema: "testschema"
-  database: "testdb"
   owner: "testuser"
   postgresqlID: "test-pg-001"

@@ -50,6 +50,22 @@ kubectl apply -f config/samples/grant.yaml
 
 This creates user `testreader` and grants SELECT privileges on `testdb`.
 
+### Step 6: Create Database with Public Schema (Optional)
+
+```bash
+kubectl apply -f config/samples/database_public.yaml
+```
+
+Creates database `testdb_public` with the default `public` schema.
+
+### Step 7: Create Database with Template (Optional)
+
+```bash
+kubectl apply -f config/samples/database_with_template.yaml
+```
+
+Creates database `testdb_template` using `template0` as a template, with `deleteFromCRD: true` for automatic cleanup.
+
 ## Negative Tests (Expected to Fail)
 
 These samples test webhook validation:
@@ -68,6 +84,8 @@ kubectl apply -f config/samples/grant_wrong_postgresqlid.yaml
 ## Cleanup
 
 ```bash
+kubectl delete -f config/samples/database_with_template.yaml
+kubectl delete -f config/samples/database_public.yaml
 kubectl delete -f config/samples/grant.yaml
 kubectl delete -f config/samples/schema.yaml
 kubectl delete -f config/samples/database.yaml
