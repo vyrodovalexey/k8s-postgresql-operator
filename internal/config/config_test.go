@@ -81,7 +81,7 @@ func TestConfig_DefaultValues(t *testing.T) {
 	assert.Equal(t, "k8s-postgresql-operator-validating-webhook-schema", cfg.K8sWebhookNameSchema)
 	assert.False(t, cfg.EnableLeaderElection)
 	assert.Equal(t, ":8081", cfg.ProbeAddr)
-	assert.Equal(t, "http://0.0.0.0:8200", cfg.VaultAddr)
+	assert.Equal(t, "", cfg.VaultAddr)
 	assert.Equal(t, "role", cfg.VaultRole)
 	assert.Equal(t, "secret", cfg.VaultMountPoint)
 	assert.Equal(t, "pdb", cfg.VaultSecretPath)
@@ -94,4 +94,249 @@ func TestConfig_DefaultValues(t *testing.T) {
 	assert.Equal(t, 3, cfg.VaultAvailabilityRetries)
 	assert.Equal(t, 10, cfg.VaultAvailabilityRetryDelaySecs)
 	assert.Equal(t, 10*time.Second, cfg.VaultAvailabilityRetryDelay())
+}
+
+func TestSetupWebhooksList_DefaultConfig(t *testing.T) {
+	// Arrange
+	cfg := New()
+
+	// Act
+	webhooks := cfg.SetupWebhooksList()
+
+	// Assert
+	assert.Len(t, webhooks, 6)
+	assert.Equal(t, []string{
+		defaultK8sWebhookNamePostgresql,
+		defaultK8sWebhookNameUser,
+		defaultK8sWebhookNameDatabase,
+		defaultK8sWebhookNameGrant,
+		defaultK8sWebhookNameRoleGroup,
+		defaultK8sWebhookNameSchema,
+	}, webhooks)
+}
+
+func TestSetupWebhooksList_CustomConfig(t *testing.T) {
+	// Arrange
+	cfg := New()
+	cfg.K8sWebhookNamePostgresql = "custom-postgresql"
+	cfg.K8sWebhookNameUser = "custom-user"
+	cfg.K8sWebhookNameDatabase = "custom-database"
+	cfg.K8sWebhookNameGrant = "custom-grant"
+	cfg.K8sWebhookNameRoleGroup = "custom-rolegroup"
+	cfg.K8sWebhookNameSchema = "custom-schema"
+
+	// Act
+	webhooks := cfg.SetupWebhooksList()
+
+	// Assert
+	assert.Len(t, webhooks, 6)
+	assert.Equal(t, []string{
+		"custom-postgresql",
+		"custom-user",
+		"custom-database",
+		"custom-grant",
+		"custom-rolegroup",
+		"custom-schema",
+	}, webhooks)
+}
+
+func TestSetupWebhooksList_ContainsAllWebhookNames(t *testing.T) {
+	// Arrange
+	cfg := New()
+
+	// Act
+	webhooks := cfg.SetupWebhooksList()
+
+	// Assert - verify each webhook name is present in the list
+	assert.Contains(t, webhooks, cfg.K8sWebhookNamePostgresql)
+	assert.Contains(t, webhooks, cfg.K8sWebhookNameUser)
+	assert.Contains(t, webhooks, cfg.K8sWebhookNameDatabase)
+	assert.Contains(t, webhooks, cfg.K8sWebhookNameGrant)
+	assert.Contains(t, webhooks, cfg.K8sWebhookNameRoleGroup)
+	assert.Contains(t, webhooks, cfg.K8sWebhookNameSchema)
+}
+
+func TestSetupWebhooksList_Order(t *testing.T) {
+	// Arrange
+	cfg := New()
+
+	// Act
+	webhooks := cfg.SetupWebhooksList()
+
+	// Assert - verify the order matches the expected order
+	assert.Equal(t, cfg.K8sWebhookNamePostgresql, webhooks[0])
+	assert.Equal(t, cfg.K8sWebhookNameUser, webhooks[1])
+	assert.Equal(t, cfg.K8sWebhookNameDatabase, webhooks[2])
+	assert.Equal(t, cfg.K8sWebhookNameGrant, webhooks[3])
+	assert.Equal(t, cfg.K8sWebhookNameRoleGroup, webhooks[4])
+	assert.Equal(t, cfg.K8sWebhookNameSchema, webhooks[5])
+}
+
+func TestPostgresqlConnectionTimeout_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeoutSecs int
+		expected    time.Duration
+	}{
+		{
+			name:        "default timeout",
+			timeoutSecs: 10,
+			expected:    10 * time.Second,
+		},
+		{
+			name:        "zero timeout",
+			timeoutSecs: 0,
+			expected:    0,
+		},
+		{
+			name:        "one second timeout",
+			timeoutSecs: 1,
+			expected:    1 * time.Second,
+		},
+		{
+			name:        "large timeout",
+			timeoutSecs: 300,
+			expected:    300 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			cfg := New()
+			cfg.PostgresqlConnectionTimeoutSecs = tt.timeoutSecs
+
+			// Act
+			result := cfg.PostgresqlConnectionTimeout()
+
+			// Assert
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestConfig_New_VaultPKIDefaults(t *testing.T) {
+	cfg := New()
+
+	assert.True(t, cfg.VaultPKIEnabled)
+	assert.Equal(t, "pki", cfg.VaultPKIMountPath)
+	assert.Equal(t, "webhook-cert", cfg.VaultPKIRole)
+	assert.Equal(t, "720h", cfg.VaultPKITTL)
+	assert.Equal(t, "24h", cfg.VaultPKIRenewalBuffer)
+}
+
+func TestConfig_VaultPKIEnabled_EnvOverride(t *testing.T) {
+	// Verify that the struct fields can be set (simulating env override)
+	cfg := New()
+
+	// Override PKI fields as env parsing would
+	cfg.VaultPKIEnabled = false
+	cfg.VaultPKIMountPath = "custom-pki"
+	cfg.VaultPKIRole = "custom-role"
+	cfg.VaultPKITTL = "48h"
+	cfg.VaultPKIRenewalBuffer = "12h"
+
+	assert.False(t, cfg.VaultPKIEnabled)
+	assert.Equal(t, "custom-pki", cfg.VaultPKIMountPath)
+	assert.Equal(t, "custom-role", cfg.VaultPKIRole)
+	assert.Equal(t, "48h", cfg.VaultPKITTL)
+	assert.Equal(t, "12h", cfg.VaultPKIRenewalBuffer)
+}
+
+func TestMetricsCollectionInterval_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		intervalSec int
+		expected    time.Duration
+	}{
+		{
+			name:        "default interval",
+			intervalSec: 30,
+			expected:    30 * time.Second,
+		},
+		{
+			name:        "zero interval",
+			intervalSec: 0,
+			expected:    0,
+		},
+		{
+			name:        "one second interval",
+			intervalSec: 1,
+			expected:    1 * time.Second,
+		},
+		{
+			name:        "large interval",
+			intervalSec: 600,
+			expected:    600 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			cfg := New()
+			cfg.MetricsCollectionIntervalSecs = tt.intervalSec
+
+			// Act
+			result := cfg.MetricsCollectionInterval()
+
+			// Assert
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestMetricsCollectionInterval_DefaultValue(t *testing.T) {
+	// Arrange
+	cfg := New()
+
+	// Act
+	result := cfg.MetricsCollectionInterval()
+
+	// Assert
+	assert.Equal(t, 30*time.Second, result)
+	assert.Equal(t, defaultMetricsCollectionIntervalSecs, cfg.MetricsCollectionIntervalSecs)
+}
+
+func TestVaultAvailabilityRetryDelay_TableDriven(t *testing.T) {
+	tests := []struct {
+		name     string
+		delaySec int
+		expected time.Duration
+	}{
+		{
+			name:     "default delay",
+			delaySec: 10,
+			expected: 10 * time.Second,
+		},
+		{
+			name:     "zero delay",
+			delaySec: 0,
+			expected: 0,
+		},
+		{
+			name:     "one second delay",
+			delaySec: 1,
+			expected: 1 * time.Second,
+		},
+		{
+			name:     "large delay",
+			delaySec: 600,
+			expected: 600 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			cfg := New()
+			cfg.VaultAvailabilityRetryDelaySecs = tt.delaySec
+
+			// Act
+			result := cfg.VaultAvailabilityRetryDelay()
+
+			// Assert
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

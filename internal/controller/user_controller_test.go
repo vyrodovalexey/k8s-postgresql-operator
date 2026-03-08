@@ -29,9 +29,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 )
 
@@ -45,6 +47,7 @@ func TestUserReconciler_Reconcile_NotFound(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -76,6 +79,7 @@ func TestUserReconciler_FindPostgresqlByID_Success(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -126,6 +130,7 @@ func TestUserReconciler_FindPostgresqlByID_NotFound(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -176,7 +181,7 @@ func TestUpdateUserCondition(t *testing.T) {
 	}
 
 	// Test adding new condition
-	updateUserCondition(user, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
+	controllerhelpers.UpdateUserCondition(user, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
 	assert.Len(t, user.Status.Conditions, 1)
 	assert.Equal(t, "Ready", user.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionTrue, user.Status.Conditions[0].Status)
@@ -184,7 +189,7 @@ func TestUpdateUserCondition(t *testing.T) {
 	assert.Equal(t, "Test message", user.Status.Conditions[0].Message)
 
 	// Test updating existing condition
-	updateUserCondition(user, "Ready", metav1.ConditionFalse, "NewReason", "New message")
+	controllerhelpers.UpdateUserCondition(user, "Ready", metav1.ConditionFalse, "NewReason", "New message")
 	assert.Len(t, user.Status.Conditions, 1)
 	assert.Equal(t, "Ready", user.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionFalse, user.Status.Conditions[0].Status)
@@ -201,6 +206,7 @@ func TestUserReconciler_Reconcile_GetError(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -234,6 +240,7 @@ func TestUserReconciler_Reconcile_PostgresqlNotFound(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -291,6 +298,7 @@ func TestUserReconciler_Reconcile_PostgresqlNotConnected(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -366,6 +374,7 @@ func TestUserReconciler_Reconcile_NoExternalInstance(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -440,6 +449,7 @@ func TestUserReconciler_FindPostgresqlByID_ListError(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,

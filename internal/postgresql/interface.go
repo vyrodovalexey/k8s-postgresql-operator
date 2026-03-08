@@ -36,7 +36,9 @@ type Client interface {
 
 	// CreateOrUpdateUser creates or updates a PostgreSQL user
 	CreateOrUpdateUser(
-		ctx context.Context, host string, port int32, adminUser, adminPassword, sslMode, username, password string) error
+		ctx context.Context, host string, port int32,
+		adminUser, adminPassword, sslMode, username, password string,
+	) error
 
 	// CreateOrUpdateRoleGroup creates or updates a PostgreSQL role group
 	CreateOrUpdateRoleGroup(

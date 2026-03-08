@@ -18,7 +18,9 @@ package metrics
 
 import (
 	"testing"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -307,6 +309,121 @@ func TestMultipleUpdates(t *testing.T) {
 	err3 := ObjectNames.WithLabelValues("user", "pg-1", "user1", "default", "", "testuser").Write(metric3)
 	require.NoError(t, err3)
 	assert.Equal(t, float64(1), *metric3.Gauge.Value)
+}
+
+func TestObserveReconcileDuration(t *testing.T) {
+	tests := []struct {
+		name       string
+		controller string
+		duration   time.Duration
+	}{
+		{
+			name:       "short duration",
+			controller: "postgresql",
+			duration:   100 * time.Millisecond,
+		},
+		{
+			name:       "long duration",
+			controller: "database",
+			duration:   5 * time.Second,
+		},
+		{
+			name:       "zero duration",
+			controller: "user",
+			duration:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act - should not panic
+			ObserveReconcileDuration(tt.controller, tt.duration)
+
+			// Assert - verify the histogram metric can be read via Collect
+			ch := make(chan prometheus.Metric, 1)
+			ReconcileDuration.WithLabelValues(tt.controller).(prometheus.Histogram).Collect(ch)
+			m := <-ch
+			metric := &dto.Metric{}
+			err := m.Write(metric)
+			require.NoError(t, err)
+			assert.NotNil(t, metric.Histogram)
+			assert.GreaterOrEqual(t, *metric.Histogram.SampleCount, uint64(1))
+		})
+	}
+}
+
+func TestIncReconcileErrors(t *testing.T) {
+	// Reset metrics
+	ReconcileErrors.Reset()
+
+	tests := []struct {
+		name       string
+		controller string
+		callCount  int
+	}{
+		{
+			name:       "single error",
+			controller: "postgresql-err",
+			callCount:  1,
+		},
+		{
+			name:       "multiple errors",
+			controller: "database-err",
+			callCount:  3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			for i := 0; i < tt.callCount; i++ {
+				IncReconcileErrors(tt.controller)
+			}
+
+			// Assert
+			metric := &dto.Metric{}
+			err := ReconcileErrors.WithLabelValues(tt.controller).Write(metric)
+			require.NoError(t, err)
+			assert.Equal(t, float64(tt.callCount), *metric.Counter.Value)
+		})
+	}
+}
+
+func TestIncReconcileTotal(t *testing.T) {
+	// Reset metrics
+	ReconcileTotal.Reset()
+
+	tests := []struct {
+		name       string
+		controller string
+		callCount  int
+	}{
+		{
+			name:       "single reconcile",
+			controller: "postgresql-total",
+			callCount:  1,
+		},
+		{
+			name:       "multiple reconciles",
+			controller: "database-total",
+			callCount:  5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			for i := 0; i < tt.callCount; i++ {
+				IncReconcileTotal(tt.controller)
+			}
+
+			// Assert
+			metric := &dto.Metric{}
+			err := ReconcileTotal.WithLabelValues(tt.controller).Write(metric)
+			require.NoError(t, err)
+			assert.Equal(t, float64(tt.callCount), *metric.Counter.Value)
+		})
+	}
 }
 
 func TestConcurrentUpdates(t *testing.T) {

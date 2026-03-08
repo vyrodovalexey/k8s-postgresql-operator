@@ -73,6 +73,14 @@ vault:
   mountPoint: "secret"
   secretPath: "pdb"
 
+# Vault PKI configuration for webhook certificates
+vaultPKI:
+  enabled: true
+  mountPath: "pki"
+  role: "webhook-cert"
+  ttl: "720h"
+  renewalBuffer: "24h"
+
 # Webhook configuration
 webhook:
   certPath: ""
@@ -113,6 +121,13 @@ service:
 # RBAC configuration
 rbac:
   create: true
+
+# Metrics configuration
+metrics:
+  enabled: true
+  port: 8080
+  serviceMonitor:
+    enabled: false
 
 # CRDs are automatically installed from the crds/ directory
 # They are installed before templates are rendered

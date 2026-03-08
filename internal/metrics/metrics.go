@@ -17,6 +17,8 @@ limitations under the License.
 package metrics
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
@@ -47,6 +49,34 @@ var (
 		},
 		[]string{"kind", "postgresql_id", "name", "namespace", "databasename", "username"},
 	)
+
+	// ReconcileDuration is a histogram of reconciliation durations per controller
+	ReconcileDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "postgresql_operator_reconcile_duration_seconds",
+			Help:    "Duration of reconciliation per controller",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"controller"},
+	)
+
+	// ReconcileErrors is a counter of reconciliation errors per controller
+	ReconcileErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_reconcile_errors_total",
+			Help: "Total number of reconciliation errors per controller",
+		},
+		[]string{"controller"},
+	)
+
+	// ReconcileTotal is a counter of total reconciliations per controller
+	ReconcileTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_reconcile_total",
+			Help: "Total number of reconciliations per controller",
+		},
+		[]string{"controller"},
+	)
 )
 
 func init() {
@@ -54,6 +84,9 @@ func init() {
 	metrics.Registry.MustRegister(PostgresqlCount)
 	metrics.Registry.MustRegister(ObjectCountPerPostgresqlID)
 	metrics.Registry.MustRegister(ObjectNames)
+	metrics.Registry.MustRegister(ReconcileDuration)
+	metrics.Registry.MustRegister(ReconcileErrors)
+	metrics.Registry.MustRegister(ReconcileTotal)
 }
 
 // UpdatePostgresqlCount updates the total number of PostgreSQL instances
@@ -81,4 +114,19 @@ func RemoveObjectInfo(kind, postgresqlID, name, namespace, databasename, usernam
 // RemoveObjectCount removes the count metric for a specific kind and postgresqlID
 func RemoveObjectCount(kind, postgresqlID string) {
 	ObjectCountPerPostgresqlID.DeleteLabelValues(kind, postgresqlID)
+}
+
+// ObserveReconcileDuration records the duration of a reconciliation for the given controller
+func ObserveReconcileDuration(controller string, duration time.Duration) {
+	ReconcileDuration.WithLabelValues(controller).Observe(duration.Seconds())
+}
+
+// IncReconcileErrors increments the reconciliation error counter for the given controller
+func IncReconcileErrors(controller string) {
+	ReconcileErrors.WithLabelValues(controller).Inc()
+}
+
+// IncReconcileTotal increments the total reconciliation counter for the given controller
+func IncReconcileTotal(controller string) {
+	ReconcileTotal.WithLabelValues(controller).Inc()
 }

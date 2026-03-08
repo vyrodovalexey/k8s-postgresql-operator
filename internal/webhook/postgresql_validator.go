@@ -44,8 +44,7 @@ func (v *PostgresqlValidator) Handle(ctx context.Context, req admission.Request)
 
 	// Check if postgresqlID is specified
 	if postgresql.Spec.ExternalInstance == nil || postgresql.Spec.ExternalInstance.PostgresqlID == "" {
-		// No postgresqlID specified, allow the request
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("externalInstance with postgresqlID is required")
 	}
 
 	postgresqlID := postgresql.Spec.ExternalInstance.PostgresqlID
@@ -73,8 +72,11 @@ func (v *PostgresqlValidator) Handle(ctx context.Context, req admission.Request)
 	}
 
 	if duplicateResult.Found {
-		v.Log.Infow("Validation denied", "reason", duplicateResult.Message, "postgresqlID", postgresqlID,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+		v.Log.Infow("Validation denied",
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

@@ -45,10 +45,10 @@ func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admis
 
 	// Check if postgresqlID and username are specified
 	if user.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if user.Spec.Username == "" {
-		return admission.Allowed("No username specified")
+		return admission.Denied("username is required")
 	}
 
 	postgresqlID := user.Spec.PostgresqlID
@@ -104,8 +104,10 @@ func (v *UserValidator) Handle(ctx context.Context, req admission.Request) admis
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "username", username,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "username", username,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

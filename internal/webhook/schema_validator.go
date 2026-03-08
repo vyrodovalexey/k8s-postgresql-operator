@@ -44,13 +44,13 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 
 	// Check if postgresqlID, schema, and owner are specified
 	if schema.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if schema.Spec.Schema == "" {
-		return admission.Allowed("No schema name specified")
+		return admission.Denied("schema name is required")
 	}
 	if schema.Spec.Owner == "" {
-		return admission.Allowed("No owner specified")
+		return admission.Denied("owner is required")
 	}
 
 	postgresqlID := schema.Spec.PostgresqlID
@@ -97,8 +97,10 @@ func (v *SchemaValidator) Handle(ctx context.Context, req admission.Request) adm
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "schema", schemaName,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "schema", schemaName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

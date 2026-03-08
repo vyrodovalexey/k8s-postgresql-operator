@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package errors
+package operrors
 
 import (
 	"errors"
@@ -177,14 +177,82 @@ func TestWrap(t *testing.T) {
 }
 
 func TestWrapf(t *testing.T) {
-	baseErr := New("base error").WithCode("BASE_CODE")
-	underlyingErr := fmt.Errorf("underlying")
+	tests := []struct {
+		name          string
+		baseErr       *Error
+		underlyingErr error
+		format        string
+		args          []interface{}
+		expectNil     bool
+		checkCode     string
+		checkMessage  string
+	}{
+		{
+			name:          "Both nil",
+			baseErr:       nil,
+			underlyingErr: nil,
+			format:        "formatted: %s",
+			args:          []interface{}{"value"},
+			expectNil:     true,
+		},
+		{
+			name:          "Base nil, underlying not nil",
+			baseErr:       nil,
+			underlyingErr: fmt.Errorf("underlying"),
+			format:        "formatted: %s",
+			args:          []interface{}{"value"},
+			expectNil:     false,
+			checkCode:     "UNKNOWN",
+			checkMessage:  "formatted: value",
+		},
+		{
+			name:          "Base not nil, underlying nil",
+			baseErr:       New("base error").WithCode("BASE_CODE"),
+			underlyingErr: nil,
+			format:        "formatted: %s",
+			args:          []interface{}{"value"},
+			expectNil:     false,
+			checkCode:     "BASE_CODE",
+			checkMessage:  "base error",
+		},
+		{
+			name:          "Both not nil",
+			baseErr:       New("base error").WithCode("BASE_CODE"),
+			underlyingErr: fmt.Errorf("underlying"),
+			format:        "formatted: %s",
+			args:          []interface{}{"value"},
+			expectNil:     false,
+			checkCode:     "BASE_CODE",
+			checkMessage:  "formatted: value",
+		},
+		{
+			name:          "Both not nil with op",
+			baseErr:       New("base error").WithCode("BASE_CODE").WithOp("testOp"),
+			underlyingErr: fmt.Errorf("underlying"),
+			format:        "detail: %d items",
+			args:          []interface{}{42},
+			expectNil:     false,
+			checkCode:     "BASE_CODE",
+			checkMessage:  "detail: 42 items",
+		},
+	}
 
-	result := Wrapf(baseErr, underlyingErr, "formatted: %s", "value")
-	assert.NotNil(t, result)
-	assert.Equal(t, "BASE_CODE", result.Code)
-	assert.Equal(t, "formatted: value", result.Message)
-	assert.Equal(t, underlyingErr, result.Err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Wrapf(tt.baseErr, tt.underlyingErr, tt.format, tt.args...)
+			if tt.expectNil {
+				assert.Nil(t, result)
+			} else {
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.checkCode, result.Code)
+				assert.Equal(t, tt.checkMessage, result.Message)
+				if tt.underlyingErr != nil && tt.baseErr != nil {
+					assert.Equal(t, tt.underlyingErr, result.Err)
+					assert.Equal(t, tt.baseErr.Op, result.Op)
+				}
+			}
+		})
+	}
 }
 
 func TestError_Is(t *testing.T) {

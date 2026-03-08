@@ -73,8 +73,8 @@ func TestDatabaseValidator_Handle_NoPostgresqlID(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Database")).Return(database, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No postgresqlID specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "postgresqlID is required")
 }
 
 func TestDatabaseValidator_Handle_NoDatabaseName(t *testing.T) {
@@ -115,8 +115,8 @@ func TestDatabaseValidator_Handle_NoDatabaseName(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Database")).Return(database, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No database name specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "database name is required")
 }
 
 func TestDatabaseValidator_Handle_PostgresqlNotFound(t *testing.T) {
@@ -351,4 +351,256 @@ func TestDatabaseValidator_Handle_DecodeError(t *testing.T) {
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
 	assert.Equal(t, int32(400), response.Result.Code)
+}
+
+func TestDatabaseValidator_Handle_VaultUnavailable(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	vaultClient := newUnhealthyVaultClient(t)
+
+	validator := &DatabaseValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	database := &instancev1alpha1.Database{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-db",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.DatabaseSpec{
+			PostgresqlID: "pg-1",
+			Database:     "db1",
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Database")).Return(database, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Vault is not available")
+}
+
+func TestDatabaseValidator_Handle_PostgresqlConnectionFailed(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	// Create a vault client that passes health checks but fails on credential retrieval
+	vaultClient := newHealthyVaultClient(t)
+
+	postgresqlID := "pg-1"
+	databaseName := "db1"
+
+	validator := &DatabaseValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	database := &instancev1alpha1.Database{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-db",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.DatabaseSpec{
+			PostgresqlID: postgresqlID,
+			Database:     databaseName,
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+						Address:      "localhost",
+						Port:         5432,
+					},
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Database")).Return(database, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Cannot connect to PostgreSQL")
+}
+
+func TestDatabaseValidator_Handle_DatabaseListError(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	postgresqlID := "pg-1"
+	databaseName := "db1"
+
+	validator := &DatabaseValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	database := &instancev1alpha1.Database{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-db",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.DatabaseSpec{
+			PostgresqlID: postgresqlID,
+			Database:     databaseName,
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+					},
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Database")).Return(database, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(nil, assert.AnError)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Equal(t, int32(500), response.Result.Code)
+}
+
+func TestDatabaseValidator_Handle_UpdateSameResource(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	postgresqlID := testPostgresqlID
+	databaseName := testDatabaseName
+
+	validator := &DatabaseValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 nil,
+			PostgresqlConnectionRetries: 3,
+			PostgresqlConnectionTimeout: 10 * time.Second,
+			VaultAvailabilityRetries:    3,
+			VaultAvailabilityRetryDelay: 10 * time.Second,
+		},
+	}
+
+	database := &instancev1alpha1.Database{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-db",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.DatabaseSpec{
+			PostgresqlID: postgresqlID,
+			Database:     databaseName,
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+					},
+				},
+			},
+		},
+	}
+
+	// Same database in the list (update scenario)
+	databaseList := &instancev1alpha1.DatabaseList{
+		Items: []instancev1alpha1.Database{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-db", // Same name
+					Namespace: "default", // Same namespace
+				},
+				Spec: instancev1alpha1.DatabaseSpec{
+					PostgresqlID: postgresqlID,
+					Database:     databaseName,
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Update,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Database")).Return(database, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(databaseList, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.True(t, response.Allowed)
 }

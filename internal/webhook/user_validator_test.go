@@ -73,8 +73,8 @@ func TestUserValidator_Handle_NoPostgresqlID(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.User")).Return(user, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No postgresqlID specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "postgresqlID is required")
 }
 
 func TestUserValidator_Handle_NoUsername(t *testing.T) {
@@ -116,8 +116,8 @@ func TestUserValidator_Handle_NoUsername(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.User")).Return(user, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No username specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "username is required")
 }
 
 func TestUserValidator_Handle_ExcludedUser(t *testing.T) {
@@ -586,4 +586,115 @@ func TestUserValidator_Handle_UserListError(t *testing.T) {
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
 	assert.Equal(t, int32(500), response.Result.Code)
+}
+
+func TestUserValidator_Handle_VaultUnavailable(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	vaultClient := newUnhealthyVaultClient(t)
+
+	validator := &UserValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+		ExcludeUserList: []string{},
+	}
+
+	user := &instancev1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-user",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.UserSpec{
+			PostgresqlID: "pg-1",
+			Username:     "user1",
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.User")).Return(user, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Vault is not available")
+}
+
+func TestUserValidator_Handle_PostgresqlConnectionFailed(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	vaultClient := newHealthyVaultClient(t)
+
+	postgresqlID := "pg-1"
+
+	validator := &UserValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+		ExcludeUserList: []string{},
+	}
+
+	user := &instancev1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-user",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.UserSpec{
+			PostgresqlID: postgresqlID,
+			Username:     "user1",
+		},
+	}
+
+	postgresqlList := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pg1",
+					Namespace: "default",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: postgresqlID,
+						Address:      "localhost",
+						Port:         5432,
+					},
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.User")).Return(user, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(postgresqlList, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Cannot connect to PostgreSQL")
 }

@@ -10,7 +10,8 @@ import (
 )
 
 func ConfigParser(cfg *config.Config) {
-	flag.StringVar(&cfg.ProbeAddr, "health-probe-bind-address", cfg.ProbeAddr, "The address the probe endpoint binds to.")
+	flag.StringVar(&cfg.ProbeAddr, "health-probe-bind-address",
+		cfg.ProbeAddr, "The address the probe endpoint binds to.")
 	flag.BoolVar(&cfg.EnableLeaderElection, "leader-elect", cfg.EnableLeaderElection,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -57,12 +58,25 @@ func ConfigParser(cfg *config.Config) {
 		cfg.VaultAvailabilityRetries, "Number of retries for Vault availability check (default: 3)")
 	flag.IntVar(&cfg.VaultAvailabilityRetryDelaySecs, "vault-availability-retry-delay-secs",
 		cfg.VaultAvailabilityRetryDelaySecs, "Delay in seconds between Vault availability retries (default: 10)")
+	flag.BoolVar(&cfg.VaultPKIEnabled, "vault-pki-enabled", cfg.VaultPKIEnabled,
+		"Enable Vault PKI for webhook certificates (default: true)")
+	flag.StringVar(&cfg.VaultPKIMountPath, "vault-pki-mount-path", cfg.VaultPKIMountPath,
+		"Vault PKI secrets engine mount path (default: pki)")
+	flag.StringVar(&cfg.VaultPKIRole, "vault-pki-role", cfg.VaultPKIRole,
+		"Vault PKI role name for issuing certificates (default: webhook-cert)")
+	flag.StringVar(&cfg.VaultPKITTL, "vault-pki-ttl", cfg.VaultPKITTL,
+		"TTL for certificates issued by Vault PKI (default: 720h)")
+	flag.StringVar(&cfg.VaultPKIRenewalBuffer, "vault-pki-renewal-buffer",
+		cfg.VaultPKIRenewalBuffer,
+		"Time before expiry to renew Vault PKI certificates (default: 24h)")
+	flag.IntVar(&cfg.MetricsCollectionIntervalSecs, "metrics-collection-interval-secs",
+		cfg.MetricsCollectionIntervalSecs, "Interval in seconds for periodic metrics collection (default: 30)")
 	flag.Parse() // Парсим флаги командной строки
 
 	// Парсим переменные окружения и сохраняем их в конфигурацию и перезаписывая существующие
 	err := env.Parse(cfg)
 
 	if err != nil {
-		log.Printf("can't parse ENV: %v", err)
+		log.Fatalf("can't parse ENV: %v", err)
 	}
 }

@@ -44,13 +44,13 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 
 	// Check if postgresqlID, role, and database are specified
 	if grant.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if grant.Spec.Role == "" {
-		return admission.Allowed("No role specified")
+		return admission.Denied("role is required")
 	}
 	if grant.Spec.Database == "" {
-		return admission.Allowed("No database specified")
+		return admission.Denied("database is required")
 	}
 
 	postgresqlID := grant.Spec.PostgresqlID
@@ -96,7 +96,9 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 	}
 
 	if !databaseExists {
-		msg := fmt.Sprintf("Database %s with postgresqlID %s does not exist in any namespace", databaseName, postgresqlID)
+		msg := fmt.Sprintf(
+			"Database %s with postgresqlID %s does not exist in any namespace",
+			databaseName, postgresqlID)
 		v.Log.Infow("Validation denied", "reason", msg, "postgresqlID", postgresqlID, "database", databaseName)
 		return admission.Denied(msg)
 	}
@@ -112,8 +114,11 @@ func (v *GrantValidator) Handle(ctx context.Context, req admission.Request) admi
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "role", role, "database", databaseName,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID,
+			"role", role, "database", databaseName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

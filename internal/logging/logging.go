@@ -18,7 +18,5 @@ func NewLogging(loglevel zapcore.Level) *zap.SugaredLogger {
 	if err != nil {
 		log.Printf("can't initialize zap logger: %v", err)
 	}
-	// nolint:errcheck // error is already logged above, no need to check again
-	defer logger.Sync()
 	return logger.Sugar()
 }

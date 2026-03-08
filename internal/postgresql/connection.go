@@ -18,11 +18,14 @@ package postgresql
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"math"
+	"math/big"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/lib/pq" // PostgreSQL driver registration for database/sql
 	"go.uber.org/zap"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
@@ -35,71 +38,115 @@ const (
 	DefaultDB      = "postgres"
 )
 
+// maxConnectionRetryDelay is the upper bound for exponential backoff delay in connection retries
+const maxConnectionRetryDelay = 60 * time.Second
+
+// calculateConnectionBackoff returns the delay for the given attempt using exponential backoff with jitter
+func calculateConnectionBackoff(baseDelay time.Duration, attempt int, maxDelay time.Duration) time.Duration {
+	exp := math.Pow(2, float64(attempt-1))
+	delay := time.Duration(float64(baseDelay) * exp)
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	// Add jitter: 0-25% of the delay
+	maxJitter := int64(delay/4) + 1
+	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
+	if err != nil {
+		return delay
+	}
+	jitter := time.Duration(n.Int64())
+	return delay + jitter
+}
+
+// waitForRetry waits for the backoff delay or context cancellation.
+// Returns an error if the context is canceled during the wait.
+func waitForRetry(
+	ctx context.Context, retryTimeout time.Duration, attempt int,
+) error {
+	delay := calculateConnectionBackoff(retryTimeout, attempt, maxConnectionRetryDelay)
+	select {
+	case <-time.After(delay):
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("connection test canceled: %w", ctx.Err())
+	}
+}
+
+// testSingleConnection performs a single connection test attempt.
+// Returns (true, nil) on success, (false, error) on failure.
+func testSingleConnection(
+	ctx context.Context, host string, port int32,
+	database, username, password, sslMode string,
+	log *zap.SugaredLogger,
+) (bool, error) {
+	connStr := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
+		host, port, username, password, database, sslMode,
+	)
+
+	connCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return false, fmt.Errorf("failed to open database connection: %w", err)
+	}
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Warnw("Failed to close database connection", "error", closeErr)
+		}
+	}()
+
+	var result int
+	if err = db.QueryRowContext(connCtx, "SELECT 1").Scan(&result); err != nil {
+		return false, fmt.Errorf("failed to query database: %w", err)
+	}
+
+	if result != 1 {
+		return false, fmt.Errorf("unexpected query result: %d", result)
+	}
+
+	return true, nil
+}
+
 // TestConnection tests the connection to a PostgreSQL instance with retry logic
 func TestConnection(
-	ctx context.Context, host string, port int32, database, username, password, sslMode string,
-	log *zap.SugaredLogger, retries int, retryTimeout time.Duration) (bool, error) {
+	ctx context.Context, host string, port int32,
+	database, username, password, sslMode string,
+	log *zap.SugaredLogger, retries int, retryTimeout time.Duration,
+) (bool, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= retries; attempt++ {
 		log.Debugw("Attempting PostgreSQL connection test",
 			"host", host, "port", port, "attempt", attempt, "maxRetries", retries)
 
-		// Build connection string
-		connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=5",
-			host, port, username, password, database, sslMode)
-
-		// Create a context with timeout for the connection test
-		connCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-
-		// Open connection
-		db, err := sql.Open("postgres", connStr)
+		ok, err := testSingleConnection(
+			ctx, host, port, database, username, password, sslMode, log,
+		)
 		if err != nil {
-			cancel()
-			lastErr = fmt.Errorf("failed to open database connection: %w", err)
-			log.Warnw("PostgreSQL connection attempt failed", "host", host, "port", port, "attempt", attempt, "error", lastErr)
+			lastErr = err
+			log.Warnw("PostgreSQL connection attempt failed",
+				"host", host, "port", port, "attempt", attempt, "error", lastErr)
 			if attempt < retries {
-				time.Sleep(retryTimeout)
+				if waitErr := waitForRetry(ctx, retryTimeout, attempt); waitErr != nil {
+					return false, waitErr
+				}
 			}
 			continue
 		}
 
-		// Test the connection with a simple query
-		var result int
-		err = db.QueryRowContext(connCtx, "SELECT 1").Scan(&result)
-		cancel()
-
-		// Close the connection
-		if closeErr := db.Close(); closeErr != nil {
-			log.Warnw("Failed to close database connection", "error", closeErr)
+		if ok {
+			log.Infow("PostgreSQL connection test successful",
+				"host", host, "port", port, "attempt", attempt)
+			return true, nil
 		}
-
-		if err != nil {
-			lastErr = fmt.Errorf("failed to query database: %w", err)
-			log.Warnw("PostgreSQL connection attempt failed", "host", host, "port", port, "attempt", attempt, "error", lastErr)
-			if attempt < retries {
-				time.Sleep(retryTimeout)
-			}
-			continue
-		}
-
-		// Verify we got the expected result
-		if result != 1 {
-			lastErr = fmt.Errorf("unexpected query result: %d", result)
-			log.Warnw("PostgreSQL connection attempt failed", "host", host, "port", port, "attempt", attempt, "error", lastErr)
-			if attempt < retries {
-				time.Sleep(retryTimeout)
-			}
-			continue
-		}
-
-		// Success!
-		log.Infow("PostgreSQL connection test successful", "host", host, "port", port, "attempt", attempt)
-		return true, nil
 	}
 
 	// All retries failed
-	return false, fmt.Errorf("failed to connect to PostgreSQL after %d attempts: %w", retries, lastErr)
+	return false, fmt.Errorf(
+		"failed to connect to PostgreSQL after %d attempts: %w", retries, lastErr,
+	)
 }
 
 // TestConnectionFromPostgresql tests the connection to a PostgreSQL instance from a Postgresql CRD

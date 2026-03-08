@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
@@ -43,6 +44,7 @@ func TestDatabaseReconciler_Reconcile_NotFound(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -74,6 +76,7 @@ func TestDatabaseReconciler_FindPostgresqlByID_Success(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,

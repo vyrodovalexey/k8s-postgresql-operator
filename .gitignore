@@ -22,6 +22,7 @@ go.work
 # editor, robots, and IDE paraphernalia
 .opencode
 .idea
+.Claude
 .vscode
 *.swp
 *.swo

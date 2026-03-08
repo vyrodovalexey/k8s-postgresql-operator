@@ -18,13 +18,36 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"math"
+	"math/big"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
+
+// maxVaultRetryDelay is the upper bound for exponential backoff delay in vault retry functions
+const maxVaultRetryDelay = 60 * time.Second
+
+// calculateVaultBackoff returns the delay for the given attempt using exponential backoff with jitter
+func calculateVaultBackoff(baseDelay time.Duration, attempt int, maxDelay time.Duration) time.Duration {
+	exp := math.Pow(2, float64(attempt-1))
+	delay := time.Duration(float64(baseDelay) * exp)
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	// Add jitter: 0-25% of the delay
+	maxJitter := int64(delay/4) + 1
+	n, err := rand.Int(rand.Reader, big.NewInt(maxJitter))
+	if err != nil {
+		return delay
+	}
+	jitter := time.Duration(n.Int64())
+	return delay + jitter
+}
 
 // getVaultCredentialsWithRetry retrieves PostgreSQL credentials from Vault with retry logic
 func getVaultCredentialsWithRetry(
@@ -45,9 +68,14 @@ func getVaultCredentialsWithRetry(
 			log.Warnw("Failed to get credentials from Vault",
 				"postgresqlID", postgresqlID, "attempt", attempt, "error", err)
 			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt, maxVaultRetryDelay)
 				log.Debugw("Retrying Vault credentials retrieval",
-					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
-				time.Sleep(retryDelay)
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return "", "", fmt.Errorf("vault credentials retrieval canceled: %w", ctx.Err())
+				}
 			}
 			continue
 		}
@@ -80,9 +108,14 @@ func getVaultUserCredentialsWithRetry(
 			log.Warnw("Failed to get user credentials from Vault",
 				"postgresqlID", postgresqlID, "username", username, "attempt", attempt, "error", err)
 			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt, maxVaultRetryDelay)
 				log.Debugw("Retrying Vault user credentials retrieval",
-					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
-				time.Sleep(retryDelay)
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return "", fmt.Errorf("vault user credentials retrieval canceled: %w", ctx.Err())
+				}
 			}
 			continue
 		}
@@ -116,15 +149,21 @@ func storeVaultUserCredentialsWithRetry(
 			log.Warnw("Failed to store user credentials in Vault",
 				"postgresqlID", postgresqlID, "username", username, "attempt", attempt, "error", err)
 			if attempt < retries {
+				delay := calculateVaultBackoff(retryDelay, attempt, maxVaultRetryDelay)
 				log.Debugw("Retrying Vault user credentials storage",
-					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
-				time.Sleep(retryDelay)
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", delay)
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return fmt.Errorf("vault user credentials storage canceled: %w", ctx.Err())
+				}
 			}
 			continue
 		}
 
 		// Success!
-		log.Debugw("User credentials stored in Vault", "postgresqlID", postgresqlID, "username", username, "attempt", attempt)
+		log.Debugw("User credentials stored in Vault",
+			"postgresqlID", postgresqlID, "username", username, "attempt", attempt)
 		return nil
 	}
 

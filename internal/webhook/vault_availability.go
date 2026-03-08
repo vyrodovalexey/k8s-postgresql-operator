@@ -44,7 +44,8 @@ func checkVaultAvailability(
 			lastErr = fmt.Errorf("vault health check failed: %w", err)
 			log.Warnw("Vault availability check failed", "attempt", attempt, "error", lastErr)
 			if attempt < retries {
-				log.Debugw("Retrying Vault availability check", "attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
+				log.Debugw("Retrying Vault availability check",
+					"attempt", attempt, "nextAttempt", attempt+1, "delay", retryDelay)
 				time.Sleep(retryDelay)
 			}
 			continue

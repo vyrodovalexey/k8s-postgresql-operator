@@ -22,14 +22,13 @@ import (
 	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
-	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // GrantReconciler reconciles a Grant object
@@ -43,161 +42,116 @@ type GrantReconciler struct {
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
-func (r *GrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Fetch the Grant instance
+func (r *GrantReconciler) Reconcile(
+	ctx context.Context, req ctrl.Request,
+) (ctrl.Result, error) {
+	startTime := time.Now()
+	metrics.IncReconcileTotal("grant")
+	defer func() {
+		metrics.ObserveReconcileDuration("grant", time.Since(startTime))
+	}()
+
 	grant := &instancev1alpha1.Grant{}
 	if err := r.Get(ctx, req.NamespacedName, grant); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		r.Log.Error(err, "Failed to get Grant")
+		r.Log.Errorw("Failed to get Grant", "error", err)
+		metrics.IncReconcileErrors("grant")
 		return ctrl.Result{}, err
 	}
 
-	// Find PostgreSQL instance by PostgresqlID
-	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, grant.Spec.PostgresqlID)
-	if err != nil {
-		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", grant.Spec.PostgresqlID)
-		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
-			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", grant.Spec.PostgresqlID, err))
+	connInfo, reason, msg := r.resolvePostgresqlConnection(
+		ctx, grant.Spec.PostgresqlID,
+	)
+	if connInfo == nil {
+		controllerhelpers.UpdateGrantCondition(
+			grant, "Ready", metav1.ConditionFalse, reason, msg,
+		)
 		if err := r.Status().Update(ctx, grant); err != nil {
-			r.Log.Error(err, "Failed to update Grant status")
+			r.Log.Errorw("Failed to update Grant status", "error", err)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Check if PostgreSQL instance is connected
-	if !postgresql.Status.Connected {
-		r.Log.Infow("PostgreSQL instance is not connected, waiting", "postgresqlID", grant.Spec.PostgresqlID)
-		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
-			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", grant.Spec.PostgresqlID))
+	if err := r.resolveAdminCredentials(ctx, connInfo); err != nil {
+		controllerhelpers.UpdateGrantCondition(
+			grant, "Ready", metav1.ConditionFalse, "VaultError",
+			fmt.Sprintf("Failed to get credentials from Vault: %v", err),
+		)
 		if err := r.Status().Update(ctx, grant); err != nil {
-			r.Log.Error(err, "Failed to update Grant status")
+			r.Log.Errorw("Failed to update Grant status", "error", err)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Get PostgreSQL connection details
-	externalInstance := postgresql.Spec.ExternalInstance
-	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration",
-			"postgresqlID", grant.Spec.PostgresqlID)
-		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
-			"PostgreSQL instance has no external instance configuration")
-		if err := r.Status().Update(ctx, grant); err != nil {
-			r.Log.Error(err, "Failed to update Grant status")
-		}
-		return ctrl.Result{}, nil
-	}
+	return r.syncGrants(ctx, grant, connInfo)
+}
 
-	port := externalInstance.Port
-	if port == 0 {
-		port = 5432
-	}
+// syncGrants applies grants in PostgreSQL and updates status
+// nolint:unparam // ctrl.Result is kept for Reconcile signature compatibility and future extensibility
+func (r *GrantReconciler) syncGrants(
+	ctx context.Context,
+	grant *instancev1alpha1.Grant,
+	info *connectionInfo,
+) (ctrl.Result, error) {
+	err := pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.ApplyGrants(
+			ctx, info.ExternalInstance.Address, info.Port,
+			info.Username, info.Password, info.SSLMode,
+			grant.Spec.Database, grant.Spec.Role,
+			grant.Spec.Grants, grant.Spec.DefaultPrivileges,
+		)
+	}, r.Log, r.PostgresqlConnectionRetries,
+		r.PostgresqlConnectionTimeout, "applyGrants")
 
-	sslMode := externalInstance.SSLMode
-	if sslMode == "" {
-		sslMode = pg.DefaultSSLMode
-	}
-
-	var postgresUsername, postgresPassword string
-	if r.VaultClient == nil {
-		r.Log.Infow("Vault client not available")
-		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "VaultNotAvailable",
-			"Vault client is not available")
-		if err := r.Status().Update(ctx, grant); err != nil {
-			r.Log.Error(err, "Failed to update Grant status")
-		}
-		return ctrl.Result{}, nil
-	}
-
-	vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
-		ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 	if err != nil {
-		r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
-		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "VaultError",
-			fmt.Sprintf("Failed to get credentials from Vault: %v", err))
-		if err := r.Status().Update(ctx, grant); err != nil {
-			r.Log.Error(err, "Failed to update Grant status")
-		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-	postgresUsername = vaultUsername
-	postgresPassword = vaultPassword
-	r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
-
-	// Apply grants in PostgreSQL with retry logic
-	err = pg.ExecuteOperationWithRetry(ctx, func() error {
-		return pg.ApplyGrants(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-			grant.Spec.Database, grant.Spec.Role, grant.Spec.Grants, grant.Spec.DefaultPrivileges)
-	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "applyGrants")
-	if err != nil {
-		r.Log.Error(err, "Failed to apply grants in PostgreSQL", "database", grant.Spec.Database, "role", grant.Spec.Role)
+		r.Log.Errorw("Failed to apply grants in PostgreSQL",
+			"error", err, "database", grant.Spec.Database, "role", grant.Spec.Role)
 		grant.Status.Applied = false
-		updateGrantCondition(grant, "Ready", metav1.ConditionFalse, "ApplyFailed",
+		controllerhelpers.UpdateGrantCondition(
+			grant, "Ready", metav1.ConditionFalse, "ApplyFailed",
 			fmt.Sprintf("Failed to apply grants: %v", err))
+		r.Recorder.Event(grant, corev1.EventTypeWarning,
+			"ApplyFailed",
+			fmt.Sprintf("Failed to apply grants for role %s on database %s: %v",
+				grant.Spec.Role, grant.Spec.Database, err))
+		metrics.IncReconcileErrors("grant")
 	} else {
 		grant.Status.Applied = true
-		updateGrantCondition(grant, "Ready", metav1.ConditionTrue, "Applied",
-			fmt.Sprintf("Grants successfully applied to role %s on database %s",
+		controllerhelpers.UpdateGrantCondition(
+			grant, "Ready", metav1.ConditionTrue, "Applied",
+			fmt.Sprintf(
+				"Grants successfully applied to role %s on database %s",
 				grant.Spec.Role, grant.Spec.Database))
 		r.Log.Infow("Grants successfully applied in PostgreSQL",
-			"PostgresqlID", grant.Spec.PostgresqlID, "database", grant.Spec.Database, "role", grant.Spec.Role)
+			"PostgresqlID", grant.Spec.PostgresqlID,
+			"database", grant.Spec.Database,
+			"role", grant.Spec.Role)
+		r.Recorder.Event(grant, corev1.EventTypeNormal,
+			"Applied",
+			fmt.Sprintf("Successfully applied grants for role %s on database %s",
+				grant.Spec.Role, grant.Spec.Database))
 	}
 
 	now := metav1.Now()
 	grant.Status.LastSyncAttempt = &now
 
-	// Update the status
 	if err := r.Status().Update(ctx, grant); err != nil {
-		r.Log.Error(err, "Failed to update Grant status")
+		r.Log.Errorw("Failed to update Grant status", "error", err)
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Infow("Successfully reconciled Grant", "database", grant.Spec.Database, "role", grant.Spec.Role)
+	r.Log.Infow("Successfully reconciled Grant",
+		"database", grant.Spec.Database, "role", grant.Spec.Role)
 	return ctrl.Result{}, nil
-}
-
-// updateGrantCondition updates or adds a condition to the Grant status using meta.SetStatusCondition
-// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
-func updateGrantCondition(
-	grant *instancev1alpha1.Grant, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: grant.Generation,
-	}
-	meta.SetStatusCondition(&grant.Status.Conditions, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *GrantReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	ignoreStatusUpdates := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldObj := e.ObjectOld.(*instancev1alpha1.Grant)
-			newObj := e.ObjectNew.(*instancev1alpha1.Grant)
-
-			if oldObj.Generation != newObj.Generation {
-				return true
-			}
-
-			if oldObj.DeletionTimestamp != newObj.DeletionTimestamp {
-				return true
-			}
-
-			return false
-		},
-		CreateFunc:  func(e event.CreateEvent) bool { return true },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
-		GenericFunc: func(e event.GenericEvent) bool { return true },
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&instancev1alpha1.Grant{}).
 		Named("grant").
-		WithEventFilter(ignoreStatusUpdates).
+		WithEventFilter(controllerhelpers.IgnoreStatusUpdatesPredicate()).
 		Complete(r)
 }

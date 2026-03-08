@@ -17,13 +17,19 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
 
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/config"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
@@ -35,6 +41,7 @@ type BaseReconcilerConfig struct {
 	Scheme                      *runtime.Scheme
 	VaultClient                 *vault.Client
 	Log                         *zap.SugaredLogger
+	Recorder                    record.EventRecorder
 	PostgresqlConnectionRetries int
 	PostgresqlConnectionTimeout time.Duration
 	VaultAvailabilityRetries    int
@@ -50,6 +57,7 @@ func NewBaseReconcilerConfig(
 		Scheme:                      mgr.GetScheme(),
 		VaultClient:                 vaultClient,
 		Log:                         lg,
+		Recorder:                    mgr.GetEventRecorderFor("postgresql-operator"),
 		PostgresqlConnectionRetries: cfg.PostgresqlConnectionRetries,
 		PostgresqlConnectionTimeout: cfg.PostgresqlConnectionTimeout(),
 		VaultAvailabilityRetries:    cfg.VaultAvailabilityRetries,
@@ -109,10 +117,97 @@ func SetupControllers(mgr ctrl.Manager, cfg *config.Config, vaultClient *vault.C
 
 	for _, ctrlSetup := range controllerSetups {
 		if err := ctrlSetup.setup(); err != nil {
-			lg.Error(err, "unable to create controller", "controller", ctrlSetup.name)
+			lg.Errorw("unable to create controller", "error", err, "controller", ctrlSetup.name)
 			return fmt.Errorf("unable to create controller %s: %w", ctrlSetup.name, err)
 		}
 	}
 
+	return nil
+}
+
+// connectionInfo holds PostgreSQL connection details resolved from a CRD
+type connectionInfo struct {
+	ExternalInstance *instancev1alpha1.ExternalPostgresqlInstance
+	Port             int32
+	SSLMode          string
+	Username         string
+	Password         string
+}
+
+// resolvePostgresqlConnection finds a PostgreSQL instance by ID,
+// validates it is connected, and retrieves admin credentials.
+// Returns nil connectionInfo and an error string if validation fails.
+func (r *BaseReconcilerConfig) resolvePostgresqlConnection(
+	ctx context.Context, postgresqlID string,
+) (info *connectionInfo, reason string, message string) {
+	postgresql, err := k8sclient.FindPostgresqlByID(
+		ctx, r.Client, postgresqlID,
+	)
+	if err != nil {
+		r.Log.Errorw("Failed to find PostgreSQL instance",
+			"error", err, "postgresqlID", postgresqlID)
+		return nil, "PostgresqlNotFound",
+			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v",
+				postgresqlID, err)
+	}
+
+	if !postgresql.Status.Connected {
+		r.Log.Infow("PostgreSQL instance is not connected, waiting",
+			"postgresqlID", postgresqlID)
+		return nil, "PostgresqlNotConnected",
+			fmt.Sprintf("PostgreSQL instance with ID %s is not connected",
+				postgresqlID)
+	}
+
+	externalInstance := postgresql.Spec.ExternalInstance
+	if externalInstance == nil {
+		r.Log.Errorw(
+			"PostgreSQL instance has no external instance configuration",
+			"postgresqlID", postgresqlID)
+		return nil, "InvalidConfiguration",
+			"PostgreSQL instance has no external instance configuration"
+	}
+
+	port := externalInstance.Port
+	if port == 0 {
+		port = pg.DefaultPort
+	}
+
+	sslMode := externalInstance.SSLMode
+	if sslMode == "" {
+		sslMode = pg.DefaultSSLMode
+	}
+
+	return &connectionInfo{
+		ExternalInstance: externalInstance,
+		Port:             port,
+		SSLMode:          sslMode,
+	}, "", ""
+}
+
+// resolveAdminCredentials retrieves admin credentials from Vault
+// and populates them in the connectionInfo.
+func (r *BaseReconcilerConfig) resolveAdminCredentials(
+	ctx context.Context, info *connectionInfo,
+) error {
+	if r.VaultClient == nil {
+		r.Log.Infow("Vault client not available")
+		return nil
+	}
+
+	username, password, err := getVaultCredentialsWithRetry(
+		ctx, r.VaultClient, info.ExternalInstance.PostgresqlID,
+		r.Log, r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay,
+	)
+	if err != nil {
+		r.Log.Errorw("Failed to get credentials from Vault",
+			"error", err, "postgresqlID", info.ExternalInstance.PostgresqlID)
+		return err
+	}
+
+	info.Username = username
+	info.Password = password
+	r.Log.Infow("Credentials retrieved from Vault",
+		"postgresqlID", info.ExternalInstance.PostgresqlID)
 	return nil
 }

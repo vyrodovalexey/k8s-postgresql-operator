@@ -228,8 +228,8 @@ func TestPostgresqlValidator_Handle_NoPostgresqlID(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No postgresqlID specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "externalInstance with postgresqlID is required")
 }
 
 func TestPostgresqlValidator_Handle_EmptyPostgresqlID(t *testing.T) {
@@ -271,8 +271,8 @@ func TestPostgresqlValidator_Handle_EmptyPostgresqlID(t *testing.T) {
 	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
 
 	response := validator.Handle(context.Background(), req)
-	assert.True(t, response.Allowed)
-	assert.Contains(t, response.Result.Message, "No postgresqlID specified")
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "externalInstance with postgresqlID is required")
 }
 
 func TestPostgresqlValidator_Handle_DuplicatePostgresqlID(t *testing.T) {
@@ -532,4 +532,117 @@ func TestPostgresqlValidator_Handle_ListError(t *testing.T) {
 	response := validator.Handle(context.Background(), req)
 	assert.False(t, response.Allowed)
 	assert.Equal(t, int32(500), response.Result.Code)
+}
+
+func TestPostgresqlValidator_Handle_VaultUnavailable(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	vaultClient := newUnhealthyVaultClient(t)
+
+	validator := &PostgresqlValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	postgresql := &instancev1alpha1.Postgresql{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pg",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.PostgresqlSpec{
+			ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+				PostgresqlID: "pg-1",
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Vault is not available")
+}
+
+func TestPostgresqlValidator_Handle_ConnectionFailed(t *testing.T) {
+	mockClient := new(MockWebhookClient)
+	mockDecoder := new(MockDecoder)
+	logger := zap.NewNop().Sugar()
+
+	// Create a vault client that passes health checks but fails on credential retrieval
+	vaultClient := newHealthyVaultClient(t)
+
+	postgresqlID := "pg-1"
+
+	validator := &PostgresqlValidator{
+		BaseValidatorConfig: BaseValidatorConfig{
+			Client:                      mockClient,
+			Decoder:                     mockDecoder,
+			Log:                         logger,
+			VaultClient:                 vaultClient,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Second,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	postgresql := &instancev1alpha1.Postgresql{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pg",
+			Namespace: "default",
+		},
+		Spec: instancev1alpha1.PostgresqlSpec{
+			ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+				PostgresqlID: postgresqlID,
+				Address:      "localhost",
+				Port:         5432,
+			},
+		},
+	}
+
+	// No duplicate found
+	existingPostgresql := &instancev1alpha1.PostgresqlList{
+		Items: []instancev1alpha1.Postgresql{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "other-pg",
+					Namespace: "other-namespace",
+				},
+				Spec: instancev1alpha1.PostgresqlSpec{
+					ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+						PostgresqlID: "pg-2", // Different ID
+					},
+				},
+			},
+		},
+	}
+
+	req := admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+		},
+	}
+
+	mockDecoder.On("Decode", req, mock.AnythingOfType("*v1alpha1.Postgresql")).Return(postgresql, nil)
+	mockClient.On("List", context.Background(), mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(existingPostgresql, nil)
+
+	response := validator.Handle(context.Background(), req)
+	assert.False(t, response.Allowed)
+	assert.Contains(t, response.Result.Message, "Cannot connect to PostgreSQL")
 }

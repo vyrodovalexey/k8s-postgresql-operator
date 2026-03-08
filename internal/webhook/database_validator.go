@@ -44,10 +44,10 @@ func (v *DatabaseValidator) Handle(ctx context.Context, req admission.Request) a
 
 	// Check if postgresqlID and database name are specified
 	if database.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if database.Spec.Database == "" {
-		return admission.Allowed("No database name specified")
+		return admission.Denied("database name is required")
 	}
 
 	postgresqlID := database.Spec.PostgresqlID
@@ -94,8 +94,10 @@ func (v *DatabaseValidator) Handle(ctx context.Context, req admission.Request) a
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "database", databaseName,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "database", databaseName,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 

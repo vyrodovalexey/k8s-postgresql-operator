@@ -22,14 +22,13 @@ import (
 	"time"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
-	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // SchemaReconciler reconciles a Schema object
@@ -43,151 +42,105 @@ type SchemaReconciler struct {
 // +kubebuilder:rbac:groups=postgresql-operator.vyrodovalexey.github.com,resources=postgresqls,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
-func (r *SchemaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Fetch the Schema instance
+func (r *SchemaReconciler) Reconcile(
+	ctx context.Context, req ctrl.Request,
+) (ctrl.Result, error) {
+	startTime := time.Now()
+	metrics.IncReconcileTotal("schema")
+	defer func() {
+		metrics.ObserveReconcileDuration("schema", time.Since(startTime))
+	}()
+
 	schema := &instancev1alpha1.Schema{}
 	if err := r.Get(ctx, req.NamespacedName, schema); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		r.Log.Error(err, "Failed to get Schema")
+		r.Log.Errorw("Failed to get Schema", "error", err)
+		metrics.IncReconcileErrors("schema")
 		return ctrl.Result{}, err
 	}
 
-	// Find PostgreSQL instance by PostgresqlID
-	postgresql, err := k8sclient.FindPostgresqlByID(ctx, r.Client, schema.Spec.PostgresqlID)
-	if err != nil {
-		r.Log.Error(err, "Failed to find PostgreSQL instance", "postgresqlID", schema.Spec.PostgresqlID)
-		updateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "PostgresqlNotFound",
-			fmt.Sprintf("PostgreSQL instance with ID %s not found: %v", schema.Spec.PostgresqlID, err))
+	connInfo, reason, msg := r.resolvePostgresqlConnection(
+		ctx, schema.Spec.PostgresqlID,
+	)
+	if connInfo == nil {
+		controllerhelpers.UpdateSchemaCondition(
+			schema, "Ready", metav1.ConditionFalse, reason, msg,
+		)
 		if err := r.Status().Update(ctx, schema); err != nil {
-			r.Log.Error(err, "Failed to update Schema status")
+			r.Log.Errorw("Failed to update Schema status", "error", err)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Check if PostgreSQL instance is connected
-	if !postgresql.Status.Connected {
-		r.Log.Infow("PostgreSQL instance is not connected, waiting", "postgresqlID", schema.Spec.PostgresqlID)
-		updateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "PostgresqlNotConnected",
-			fmt.Sprintf("PostgreSQL instance with ID %s is not connected", schema.Spec.PostgresqlID))
-		if err := r.Status().Update(ctx, schema); err != nil {
-			r.Log.Error(err, "Failed to update Schema status")
-		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
+	// Resolve admin credentials (non-fatal if Vault unavailable)
+	_ = r.resolveAdminCredentials(ctx, connInfo)
 
-	// Get PostgreSQL connection details
-	externalInstance := postgresql.Spec.ExternalInstance
-	if externalInstance == nil {
-		r.Log.Error(nil, "PostgreSQL instance has no external instance configuration",
-			"postgresqlID", schema.Spec.PostgresqlID)
-		updateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "InvalidConfiguration",
-			"PostgreSQL instance has no external instance configuration")
-		if err := r.Status().Update(ctx, schema); err != nil {
-			r.Log.Error(err, "Failed to update Schema status")
-		}
-		return ctrl.Result{}, nil
-	}
+	return r.syncSchema(ctx, schema, connInfo)
+}
 
-	port := externalInstance.Port
-	if port == 0 {
-		port = 5432
-	}
+// syncSchema creates or updates the schema in PostgreSQL
+// nolint:unparam // ctrl.Result is kept for Reconcile signature compatibility and future extensibility
+func (r *SchemaReconciler) syncSchema(
+	ctx context.Context,
+	schema *instancev1alpha1.Schema,
+	info *connectionInfo,
+) (ctrl.Result, error) {
+	err := pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.CreateOrUpdateSchema(
+			ctx, info.ExternalInstance.Address, info.Port,
+			info.Username, info.Password, info.SSLMode,
+			pg.DefaultDB, schema.Spec.Schema, schema.Spec.Owner,
+		)
+	}, r.Log, r.PostgresqlConnectionRetries,
+		r.PostgresqlConnectionTimeout, "createOrUpdateSchema")
 
-	sslMode := externalInstance.SSLMode
-	if sslMode == "" {
-		sslMode = pg.DefaultSSLMode
-	}
-
-	var postgresUsername, postgresPassword string
-	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
-			ctx, r.VaultClient, externalInstance.PostgresqlID, r.Log,
-			r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
-		if err != nil {
-			r.Log.Error(err, "Failed to get credentials from Vault", "postgresqlID", externalInstance.PostgresqlID)
-		} else {
-			postgresUsername = vaultUsername
-			postgresPassword = vaultPassword
-			r.Log.Infow("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
-		}
-	} else {
-		// Use password from spec if Vault is not available
-		r.Log.Infow("Vault client not available")
-	}
-
-	// Create or update schema in PostgreSQL with retry logic
-	// Connect to postgres database as default
-	err = pg.ExecuteOperationWithRetry(ctx, func() error {
-		return pg.CreateOrUpdateSchema(ctx, externalInstance.Address, port, postgresUsername, postgresPassword, sslMode,
-			"postgres", schema.Spec.Schema, schema.Spec.Owner)
-	}, r.Log, r.PostgresqlConnectionRetries, r.PostgresqlConnectionTimeout, "createOrUpdateSchema")
 	if err != nil {
-		r.Log.Error(err, "Failed to create/update schema in PostgreSQL", "schema", schema.Spec.Schema)
+		r.Log.Errorw("Failed to create/update schema in PostgreSQL",
+			"error", err, "schema", schema.Spec.Schema)
 		schema.Status.Created = false
-		updateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "CreateFailed",
+		controllerhelpers.UpdateSchemaCondition(
+			schema, "Ready", metav1.ConditionFalse, "CreateFailed",
 			fmt.Sprintf("Failed to create schema: %v", err))
+		r.Recorder.Event(schema, corev1.EventTypeWarning,
+			"CreateFailed",
+			fmt.Sprintf("Failed to create schema %s: %v",
+				schema.Spec.Schema, err))
+		metrics.IncReconcileErrors("schema")
 	} else {
 		schema.Status.Created = true
-		updateSchemaCondition(schema, "Ready", metav1.ConditionTrue, "Created",
-			fmt.Sprintf("Schema %s successfully created", schema.Spec.Schema))
+		controllerhelpers.UpdateSchemaCondition(
+			schema, "Ready", metav1.ConditionTrue, "Created",
+			fmt.Sprintf("Schema %s successfully created",
+				schema.Spec.Schema))
 		r.Log.Infow("Schema successfully created in PostgreSQL",
-			"PostgresqlID", schema.Spec.PostgresqlID, "schema", schema.Spec.Schema)
+			"PostgresqlID", schema.Spec.PostgresqlID,
+			"schema", schema.Spec.Schema)
+		r.Recorder.Event(schema, corev1.EventTypeNormal,
+			"Created",
+			fmt.Sprintf("Successfully created schema %s",
+				schema.Spec.Schema))
 	}
 
 	now := metav1.Now()
 	schema.Status.LastSyncAttempt = &now
 
-	// Update the status
 	if err := r.Status().Update(ctx, schema); err != nil {
-		r.Log.Error(err, "Failed to update Schema status")
+		r.Log.Errorw("Failed to update Schema status", "error", err)
 		return ctrl.Result{}, err
 	}
 
-	r.Log.Infow("Successfully reconciled Schema", "schema", schema.Spec.Schema)
+	r.Log.Infow("Successfully reconciled Schema",
+		"schema", schema.Spec.Schema)
 	return ctrl.Result{}, nil
-}
-
-// updateSchemaCondition updates or adds a condition to the Schema status using meta.SetStatusCondition
-// nolint:unparam // conditionType parameter is kept for API consistency and future extensibility
-func updateSchemaCondition(
-	schema *instancev1alpha1.Schema, conditionType string, status metav1.ConditionStatus, reason, message string) {
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: schema.Generation,
-	}
-	meta.SetStatusCondition(&schema.Status.Conditions, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SchemaReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	ignoreStatusUpdates := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldObj := e.ObjectOld.(*instancev1alpha1.Schema)
-			newObj := e.ObjectNew.(*instancev1alpha1.Schema)
-
-			if oldObj.Generation != newObj.Generation {
-				return true
-			}
-
-			if oldObj.DeletionTimestamp != newObj.DeletionTimestamp {
-				return true
-			}
-
-			return false
-		},
-		CreateFunc:  func(e event.CreateEvent) bool { return true },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
-		GenericFunc: func(e event.GenericEvent) bool { return true },
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&instancev1alpha1.Schema{}).
 		Named("schema").
-		WithEventFilter(ignoreStatusUpdates).
+		WithEventFilter(controllerhelpers.IgnoreStatusUpdatesPredicate()).
 		Complete(r)
 }

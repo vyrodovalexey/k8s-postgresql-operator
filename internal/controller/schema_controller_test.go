@@ -28,9 +28,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	instancev1alpha1 "github.com/vyrodovalexey/k8s-postgresql-operator/api/v1alpha1"
+	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
 	k8sclient "github.com/vyrodovalexey/k8s-postgresql-operator/internal/k8s"
 )
 
@@ -42,6 +44,7 @@ func TestSchemaReconciler_Reconcile_NotFound(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -73,6 +76,7 @@ func TestSchemaReconciler_FindPostgresqlByID_Success(t *testing.T) {
 		BaseReconcilerConfig: BaseReconcilerConfig{
 			Client:                      mockClient,
 			Log:                         logger,
+			Recorder:                    record.NewFakeRecorder(100),
 			PostgresqlConnectionRetries: 3,
 			PostgresqlConnectionTimeout: 10 * time.Second,
 			VaultAvailabilityRetries:    3,
@@ -127,7 +131,7 @@ func TestUpdateSchemaCondition(t *testing.T) {
 	}
 
 	// Test adding new condition
-	updateSchemaCondition(schema, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
+	controllerhelpers.UpdateSchemaCondition(schema, "Ready", metav1.ConditionTrue, "TestReason", "Test message")
 	assert.Len(t, schema.Status.Conditions, 1)
 	assert.Equal(t, "Ready", schema.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionTrue, schema.Status.Conditions[0].Status)
@@ -135,7 +139,7 @@ func TestUpdateSchemaCondition(t *testing.T) {
 	assert.Equal(t, "Test message", schema.Status.Conditions[0].Message)
 
 	// Test updating existing condition
-	updateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "NewReason", "New message")
+	controllerhelpers.UpdateSchemaCondition(schema, "Ready", metav1.ConditionFalse, "NewReason", "New message")
 	assert.Len(t, schema.Status.Conditions, 1)
 	assert.Equal(t, "Ready", schema.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionFalse, schema.Status.Conditions[0].Status)

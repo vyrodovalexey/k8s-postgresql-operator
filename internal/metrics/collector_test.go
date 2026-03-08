@@ -498,6 +498,94 @@ func TestCollectUsers_MultipleUsers(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestCollectMetrics_ErrorOnDatabaseList(t *testing.T) {
+	mockClient := new(MockClient)
+	logger := zap.NewNop().Sugar()
+	collector := NewCollector(mockClient, logger)
+
+	ctx := context.Background()
+
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(
+		&instancev1alpha1.PostgresqlList{Items: []instancev1alpha1.Postgresql{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.UserList"), mock.Anything).Return(
+		&instancev1alpha1.UserList{Items: []instancev1alpha1.User{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(
+		nil, errors.New("database list error"))
+
+	err := collector.CollectMetrics(ctx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "database list error")
+}
+
+func TestCollectMetrics_ErrorOnGrantList(t *testing.T) {
+	mockClient := new(MockClient)
+	logger := zap.NewNop().Sugar()
+	collector := NewCollector(mockClient, logger)
+
+	ctx := context.Background()
+
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(
+		&instancev1alpha1.PostgresqlList{Items: []instancev1alpha1.Postgresql{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.UserList"), mock.Anything).Return(
+		&instancev1alpha1.UserList{Items: []instancev1alpha1.User{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(
+		&instancev1alpha1.DatabaseList{Items: []instancev1alpha1.Database{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.GrantList"), mock.Anything).Return(
+		nil, errors.New("grant list error"))
+
+	err := collector.CollectMetrics(ctx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "grant list error")
+}
+
+func TestCollectMetrics_ErrorOnRoleGroupList(t *testing.T) {
+	mockClient := new(MockClient)
+	logger := zap.NewNop().Sugar()
+	collector := NewCollector(mockClient, logger)
+
+	ctx := context.Background()
+
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(
+		&instancev1alpha1.PostgresqlList{Items: []instancev1alpha1.Postgresql{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.UserList"), mock.Anything).Return(
+		&instancev1alpha1.UserList{Items: []instancev1alpha1.User{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(
+		&instancev1alpha1.DatabaseList{Items: []instancev1alpha1.Database{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.GrantList"), mock.Anything).Return(
+		&instancev1alpha1.GrantList{Items: []instancev1alpha1.Grant{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(
+		nil, errors.New("rolegroup list error"))
+
+	err := collector.CollectMetrics(ctx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "rolegroup list error")
+}
+
+func TestCollectMetrics_ErrorOnSchemaList(t *testing.T) {
+	mockClient := new(MockClient)
+	logger := zap.NewNop().Sugar()
+	collector := NewCollector(mockClient, logger)
+
+	ctx := context.Background()
+
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.PostgresqlList"), mock.Anything).Return(
+		&instancev1alpha1.PostgresqlList{Items: []instancev1alpha1.Postgresql{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.UserList"), mock.Anything).Return(
+		&instancev1alpha1.UserList{Items: []instancev1alpha1.User{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.DatabaseList"), mock.Anything).Return(
+		&instancev1alpha1.DatabaseList{Items: []instancev1alpha1.Database{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.GrantList"), mock.Anything).Return(
+		&instancev1alpha1.GrantList{Items: []instancev1alpha1.Grant{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.RoleGroupList"), mock.Anything).Return(
+		&instancev1alpha1.RoleGroupList{Items: []instancev1alpha1.RoleGroup{}}, nil)
+	mockClient.On("List", ctx, mock.AnythingOfType("*v1alpha1.SchemaList"), mock.Anything).Return(
+		nil, errors.New("schema list error"))
+
+	err := collector.CollectMetrics(ctx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "schema list error")
+}
+
 func TestCollectMetrics_ConcurrentAccess(t *testing.T) {
 	mockClient := new(MockClient)
 	logger := zap.NewNop().Sugar()

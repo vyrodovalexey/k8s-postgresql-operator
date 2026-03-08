@@ -1,0 +1,128 @@
+Thank you for installing {{ include "k8s-postgresql-operator.fullname" . }}!
+
+Your release is named: {{ .Release.Name }}
+Chart version: {{ .Chart.Version }}
+App version: {{ .Chart.AppVersion }}
+
+The operator has been deployed to namespace: {{ .Release.Namespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VERIFY THE DEPLOYMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Check that the operator pod is running:
+
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "k8s-postgresql-operator.name" . }}
+
+View operator logs:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "k8s-postgresql-operator.name" . }} -f
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Register a PostgreSQL instance:
+
+  kubectl apply -f - <<EOF
+  apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
+  kind: Postgresql
+  metadata:
+    name: my-postgresql
+  spec:
+    externalInstance:
+      postgresqlID: "my-pg-001"
+      address: "postgres.example.com"
+      port: 5432
+      sslMode: "require"
+  EOF
+
+2. Create a database user:
+
+  kubectl apply -f - <<EOF
+  apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
+  kind: User
+  metadata:
+    name: my-user
+  spec:
+    postgresqlID: "my-pg-001"
+    username: "appuser"
+  EOF
+
+3. Create a database:
+
+  kubectl apply -f - <<EOF
+  apiVersion: postgresql-operator.vyrodovalexey.github.com/v1alpha1
+  kind: Database
+  metadata:
+    name: my-database
+  spec:
+    postgresqlID: "my-pg-001"
+    database: "mydb"
+    owner: "appuser"
+  EOF
+
+See the project README for the full apply sequence and all CRD examples:
+  {{ .Chart.Home }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CERTIFICATE MANAGEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{- if .Values.vaultPKI.enabled }}
+Vault PKI is ENABLED. Webhook TLS certificates will be issued automatically
+from Vault PKI mount "{{ .Values.vaultPKI.mountPath }}" using role "{{ .Values.vaultPKI.role }}".
+Certificate TTL: {{ .Values.vaultPKI.ttl }} (renewed {{ .Values.vaultPKI.renewalBuffer }} before expiry).
+
+Ensure the following Vault prerequisites are met:
+  - PKI secrets engine enabled at: {{ .Values.vaultPKI.mountPath }}
+  - PKI role "{{ .Values.vaultPKI.role }}" exists and allows the operator's service name
+  - Vault Kubernetes auth is configured for the operator's service account
+{{- else }}
+Vault PKI is DISABLED. The operator will use self-signed certificates for webhook TLS.
+To enable Vault PKI, set: --set vaultPKI.enabled=true
+
+Certificate priority order:
+  1. External certificates (WEBHOOK_CERT_PATH set)
+  2. Vault PKI (vaultPKI.enabled=true)
+  3. Self-signed (automatic fallback)
+{{- end }}
+
+{{- if .Values.webhooks.enabled }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VALIDATING WEBHOOKS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Validating webhooks are ENABLED (failurePolicy: {{ .Values.webhooks.failurePolicy }}).
+The webhooks enforce:
+  - Required fields (postgresqlID, username, database name) must not be empty
+  - The referenced PostgreSQL instance must exist and be reachable
+  - No duplicate resource combinations across the cluster
+
+Check webhook configurations:
+
+  kubectl get validatingwebhookconfigurations | grep postgresql
+{{- end }}
+
+{{- if .Values.metrics.enabled }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+METRICS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Prometheus metrics are available on port {{ .Values.metrics.port | default 8080 }} at /metrics.
+
+Key custom metrics:
+  - postgresql_operator_postgresql_count        (Gauge)
+  - postgresql_operator_object_count            (Gauge, labels: kind, postgresql_id)
+  - postgresql_operator_reconcile_total         (Counter, labels: controller)
+  - postgresql_operator_reconcile_errors_total  (Counter, labels: controller)
+  - postgresql_operator_reconcile_duration_seconds (Histogram, labels: controller)
+
+{{- if .Values.metrics.serviceMonitor.enabled }}
+A ServiceMonitor has been created for Prometheus Operator integration.
+{{- else }}
+To enable Prometheus Operator integration, set: --set metrics.serviceMonitor.enabled=true
+{{- end }}
+{{- end }}

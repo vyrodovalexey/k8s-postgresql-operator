@@ -18,7 +18,9 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
@@ -35,7 +37,9 @@ type Client struct {
 // VAULT_ADDR: Vault server address (required)
 // VAULT_ROLE: Vault role for Kubernetes authentication (required)
 // VAULT_TOKEN_PATH: Path to Kubernetes service account token file (optional, defaults to standard path)
-func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string) (*Client, error) {
+func NewClient(
+	ctx context.Context, vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath string,
+) (*Client, error) {
 	if vaultRole == "" {
 		return nil, fmt.Errorf("environment variable VAULT_ROLE is not set (required for Kubernetes auth)")
 	}
@@ -58,7 +62,7 @@ func NewClient(vaultAddr, vaultRole, tokenPath, vaultMountPoint, vaultSecretPath
 	}
 
 	// Authenticate with Vault using Kubernetes auth
-	authInfo, err := client.Auth().Login(context.Background(), k8sAuth)
+	authInfo, err := client.Auth().Login(ctx, k8sAuth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to authenticate with Vault using Kubernetes auth: %w", err)
 	}
@@ -160,4 +164,121 @@ func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlI
 	}
 
 	return nil
+}
+
+// PKICertificate holds the certificate data returned by Vault PKI
+type PKICertificate struct {
+	Certificate  string
+	PrivateKey   string
+	CAChain      []string
+	SerialNumber string
+	Expiration   int64
+}
+
+// IssueCertificate issues a new TLS certificate from Vault PKI
+func (c *Client) IssueCertificate(
+	ctx context.Context, mountPath, roleName, commonName string,
+	altNames []string, ipSANs []string, ttl string,
+) (*PKICertificate, error) {
+	path := fmt.Sprintf("%s/issue/%s", mountPath, roleName)
+
+	data := map[string]interface{}{
+		"common_name": commonName,
+		"ttl":         ttl,
+	}
+	if len(altNames) > 0 {
+		data["alt_names"] = strings.Join(altNames, ",")
+	}
+	if len(ipSANs) > 0 {
+		data["ip_sans"] = strings.Join(ipSANs, ",")
+	}
+
+	secret, err := c.client.Logical().WriteWithContext(ctx, path, data)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to issue certificate from Vault PKI: %w", err,
+		)
+	}
+	if secret == nil || secret.Data == nil {
+		return nil, fmt.Errorf(
+			"empty response from Vault PKI at path: %s", path,
+		)
+	}
+
+	return parsePKICertificateResponse(secret.Data, path)
+}
+
+// parsePKICertificateResponse parses the Vault PKI response data
+func parsePKICertificateResponse(
+	data map[string]interface{}, path string,
+) (*PKICertificate, error) {
+	result := &PKICertificate{}
+
+	certVal, ok := data["certificate"].(string)
+	if !ok || certVal == "" {
+		return nil, fmt.Errorf(
+			"certificate not found in Vault PKI response at: %s", path,
+		)
+	}
+	result.Certificate = certVal
+
+	keyVal, ok := data["private_key"].(string)
+	if !ok || keyVal == "" {
+		return nil, fmt.Errorf(
+			"private_key not found in Vault PKI response at: %s", path,
+		)
+	}
+	result.PrivateKey = keyVal
+
+	if serial, ok := data["serial_number"].(string); ok {
+		result.SerialNumber = serial
+	}
+
+	switch exp := data["expiration"].(type) {
+	case json.Number:
+		if v, err := exp.Int64(); err == nil {
+			result.Expiration = v
+		}
+	case float64:
+		result.Expiration = int64(exp)
+	}
+
+	if chain, ok := data["ca_chain"].([]interface{}); ok {
+		for _, c := range chain {
+			if s, ok := c.(string); ok {
+				result.CAChain = append(result.CAChain, s)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// GetCACertificate retrieves the CA certificate from Vault PKI
+func (c *Client) GetCACertificate(
+	ctx context.Context, mountPath string,
+) (string, error) {
+	path := fmt.Sprintf("%s/cert/ca", mountPath)
+
+	secret, err := c.client.Logical().ReadWithContext(ctx, path)
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to read CA certificate from Vault PKI: %w", err,
+		)
+	}
+	if secret == nil || secret.Data == nil {
+		return "", fmt.Errorf(
+			"empty CA response from Vault PKI at path: %s", path,
+		)
+	}
+
+	certVal, ok := secret.Data["certificate"].(string)
+	if !ok || certVal == "" {
+		return "", fmt.Errorf(
+			"CA certificate not found in Vault PKI response at: %s",
+			path,
+		)
+	}
+
+	return certVal, nil
 }

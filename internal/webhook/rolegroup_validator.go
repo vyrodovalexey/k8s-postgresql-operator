@@ -44,10 +44,10 @@ func (v *RoleGroupValidator) Handle(ctx context.Context, req admission.Request) 
 
 	// Check if postgresqlID and groupRole are specified
 	if roleGroup.Spec.PostgresqlID == "" {
-		return admission.Allowed("No postgresqlID specified")
+		return admission.Denied("postgresqlID is required")
 	}
 	if roleGroup.Spec.GroupRole == "" {
-		return admission.Allowed("No groupRole specified")
+		return admission.Denied("groupRole is required")
 	}
 
 	postgresqlID := roleGroup.Spec.PostgresqlID
@@ -94,8 +94,10 @@ func (v *RoleGroupValidator) Handle(ctx context.Context, req admission.Request) 
 
 	if duplicateResult.Found {
 		v.Log.Infow("Validation denied",
-			"reason", duplicateResult.Message, "postgresqlID", postgresqlID, "groupRole", groupRole,
-			"existing-namespace", duplicateResult.Existing.GetNamespace(), "existing-name", duplicateResult.Existing.GetName())
+			"reason", duplicateResult.Message,
+			"postgresqlID", postgresqlID, "groupRole", groupRole,
+			"existing-namespace", duplicateResult.Existing.GetNamespace(),
+			"existing-name", duplicateResult.Existing.GetName())
 		return admission.Denied(duplicateResult.Message)
 	}
 
