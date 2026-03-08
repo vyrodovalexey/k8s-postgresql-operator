@@ -165,8 +165,8 @@ func TestGrantReconciler_Reconcile_WithVault_Success(t *testing.T) {
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "admin",
-						"admin_password": "adminpass",
+						"login":    "admin",
+						"password": "adminpass",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},

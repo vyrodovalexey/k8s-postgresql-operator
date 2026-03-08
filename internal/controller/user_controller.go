@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"time"
@@ -138,6 +140,9 @@ func (r *UserReconciler) syncUser(
 			"Created",
 			fmt.Sprintf("Successfully created user %s",
 				user.Spec.Username))
+		if dbPassword != "" {
+			user.Status.LastAppliedPasswordHash = computePasswordHash(dbPassword)
+		}
 	}
 
 	now := metav1.Now()
@@ -185,12 +190,33 @@ func (r *UserReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// computePasswordHash computes SHA-256 hash of a password
+func computePasswordHash(password string) string {
+	hash := sha256.Sum256([]byte(password))
+	return hex.EncodeToString(hash[:])
+}
+
 // handleVaultUserPassword handles password retrieval/generation from Vault
 func (r *UserReconciler) handleVaultUserPassword(ctx context.Context, user *instancev1alpha1.User) string {
 	vaultUserPassword, err := getVaultUserCredentialsWithRetry(
 		ctx, r.VaultClient, user.Spec.PostgresqlID, user.Spec.Username, r.Log,
 		r.VaultAvailabilityRetries, r.VaultAvailabilityRetryDelay)
 	credentialsExist := err == nil && vaultUserPassword != ""
+
+	// If credentials exist in Vault and updatePassword is false, check for external changes
+	if credentialsExist && !user.Spec.UpdatePassword {
+		currentHash := computePasswordHash(vaultUserPassword)
+		if currentHash == user.Status.LastAppliedPasswordHash {
+			// Password unchanged - no PG update needed
+			r.Log.Infow("User credentials retrieved from Vault, password unchanged",
+				"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+			return vaultUserPassword
+		}
+		// Password changed externally in Vault - PG will be updated in syncUser
+		r.Log.Infow("External Vault password change detected for user",
+			"postgresqlID", user.Spec.PostgresqlID, "user", user.Spec.Username)
+		return vaultUserPassword
+	}
 
 	// Generate new password if:
 	// 1. Credentials don't exist in Vault (regardless of updatePassword option)

@@ -31,6 +31,7 @@ import (
 	controllerhelpers "github.com/vyrodovalexey/k8s-postgresql-operator/internal/controller/helpers"
 	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/metrics"
 	pg "github.com/vyrodovalexey/k8s-postgresql-operator/internal/postgresql"
+	"github.com/vyrodovalexey/k8s-postgresql-operator/internal/vault"
 )
 
 // PostgresqlReconciler reconciles a Postgresql object
@@ -93,21 +94,11 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(
 
 	connectionAddress := fmt.Sprintf("%s:%d", externalInstance.Address, port)
 	var username, password string
+	var usedDefaultCreds bool
 
 	if r.VaultClient != nil {
-		vaultUsername, vaultPassword, err := getVaultCredentialsWithRetry(
-			ctx, r.VaultClient, externalInstance.PostgresqlID,
-			r.Log, r.VaultAvailabilityRetries,
-			r.VaultAvailabilityRetryDelay)
-		if err != nil {
-			r.Log.Errorw("Failed to get credentials from Vault",
-				"error", err, "postgresqlID", externalInstance.PostgresqlID)
-		} else {
-			username = vaultUsername
-			password = vaultPassword
-			r.Log.Infow("Credentials retrieved from Vault",
-				"postgresqlID", externalInstance.PostgresqlID)
-		}
+		username, password, usedDefaultCreds = r.resolveInstanceCredentials(
+			ctx, externalInstance.PostgresqlID)
 	}
 
 	sslMode := externalInstance.SSLMode
@@ -132,6 +123,16 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(
 				connectionAddress, connErr))
 	}
 
+	// If connected with default creds, store them as instance_admin
+	if connected && usedDefaultCreds && r.VaultClient != nil {
+		r.storeInstanceAdminCredentials(ctx, postgresql, externalInstance.PostgresqlID, username, password)
+	}
+
+	// Check for instance admin password rotation
+	if connected && r.VaultClient != nil && !usedDefaultCreds {
+		r.handleInstanceAdminPasswordRotation(ctx, postgresql, externalInstance, port, sslMode)
+	}
+
 	statusNeedsUpdate := r.updateConnectionStatus(
 		postgresql, connectionAddress, connected, connErr,
 	)
@@ -145,6 +146,162 @@ func (r *PostgresqlReconciler) reconcileExternalInstance(
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// resolveInstanceCredentials resolves credentials for a PostgreSQL instance.
+// Returns (login, password, usedDefaultCreds).
+// First tries instance_admin, then falls back to default credentials.
+func (r *PostgresqlReconciler) resolveInstanceCredentials(
+	ctx context.Context, postgresqlID string,
+) (login, password string, usedDefaultCreds bool) {
+	// Try instance-specific credentials first
+	login, password, err := getVaultCredentialsWithRetry(
+		ctx, r.VaultClient, postgresqlID,
+		r.Log, r.VaultAvailabilityRetries,
+		r.VaultAvailabilityRetryDelay)
+	if err == nil {
+		r.Log.Infow("Instance admin credentials retrieved from Vault",
+			"postgresqlID", postgresqlID)
+		metrics.IncVaultCredentialResolution("instance_admin")
+		return login, password, false
+	}
+
+	// If secret not found, try default credentials
+	if vault.IsSecretNotFound(err) {
+		r.Log.Infow("Instance admin credentials not found, trying default credentials",
+			"postgresqlID", postgresqlID)
+
+		defaultLogin, defaultPassword, defaultErr := getDefaultVaultCredentialsWithRetry(
+			ctx, r.VaultClient,
+			r.Log, r.VaultAvailabilityRetries,
+			r.VaultAvailabilityRetryDelay)
+		if defaultErr != nil {
+			r.Log.Errorw("Failed to get default credentials from Vault",
+				"error", defaultErr, "postgresqlID", postgresqlID)
+			metrics.IncVaultCredentialResolution("none")
+			return "", "", false
+		}
+
+		r.Log.Infow("Using default credentials for instance",
+			"postgresqlID", postgresqlID)
+		metrics.IncVaultCredentialResolution("default")
+		return defaultLogin, defaultPassword, true
+	}
+
+	// Vault error (not a 404) - don't fallback
+	r.Log.Errorw("Failed to get credentials from Vault",
+		"error", err, "postgresqlID", postgresqlID)
+	metrics.IncVaultCredentialResolution("none")
+	return "", "", false
+}
+
+// storeInstanceAdminCredentials stores credentials as instance_admin in Vault
+func (r *PostgresqlReconciler) storeInstanceAdminCredentials(
+	ctx context.Context,
+	postgresql *instancev1alpha1.Postgresql,
+	postgresqlID, login, password string,
+) {
+	err := storeVaultCredentialsWithRetry(
+		ctx, r.VaultClient, postgresqlID, login, password,
+		r.Log, r.VaultAvailabilityRetries,
+		r.VaultAvailabilityRetryDelay)
+	if err != nil {
+		r.Log.Errorw("Failed to store instance admin credentials in Vault",
+			"error", err, "postgresqlID", postgresqlID)
+		r.Recorder.Event(postgresql, corev1.EventTypeWarning,
+			"CredentialStoreFailed",
+			fmt.Sprintf("Failed to store instance admin credentials for %s: %v",
+				postgresqlID, err))
+		return
+	}
+	r.Log.Infow("Instance admin credentials stored in Vault",
+		"postgresqlID", postgresqlID)
+	r.Recorder.Event(postgresql, corev1.EventTypeNormal,
+		"InstanceRegistered",
+		fmt.Sprintf("Instance admin credentials stored for %s", postgresqlID))
+}
+
+// handleInstanceAdminPasswordRotation checks for and handles password rotation
+func (r *PostgresqlReconciler) handleInstanceAdminPasswordRotation(
+	ctx context.Context,
+	postgresql *instancev1alpha1.Postgresql,
+	externalInstance *instancev1alpha1.ExternalPostgresqlInstance,
+	port int32, sslMode string,
+) {
+	newPassword, err := getInstanceAdminNewPasswordWithRetry(
+		ctx, r.VaultClient, externalInstance.PostgresqlID,
+		r.Log, r.VaultAvailabilityRetries,
+		r.VaultAvailabilityRetryDelay)
+	if err != nil {
+		r.Log.Warnw("Failed to check for password rotation",
+			"error", err, "postgresqlID", externalInstance.PostgresqlID)
+		return
+	}
+
+	if newPassword == "" {
+		// No rotation needed
+		return
+	}
+
+	r.Log.Infow("Password rotation detected, changing instance admin password",
+		"postgresqlID", externalInstance.PostgresqlID)
+
+	// Get current credentials to connect
+	login, currentPassword, err := getVaultCredentialsWithRetry(
+		ctx, r.VaultClient, externalInstance.PostgresqlID,
+		r.Log, r.VaultAvailabilityRetries,
+		r.VaultAvailabilityRetryDelay)
+	if err != nil {
+		r.Log.Errorw("Failed to get current credentials for password rotation",
+			"error", err, "postgresqlID", externalInstance.PostgresqlID)
+		return
+	}
+
+	// Change password in PostgreSQL using the existing CreateOrUpdateUser function
+	// which handles ALTER USER ... WITH PASSWORD
+	pgErr := pg.ExecuteOperationWithRetry(ctx, func() error {
+		return pg.CreateOrUpdateUser(
+			ctx, externalInstance.Address, port,
+			login, currentPassword, sslMode,
+			login, newPassword,
+		)
+	}, r.Log, r.PostgresqlConnectionRetries,
+		r.PostgresqlConnectionTimeout, "rotateInstanceAdminPassword")
+
+	if pgErr != nil {
+		r.Log.Errorw("Failed to change instance admin password in PostgreSQL",
+			"error", pgErr, "postgresqlID", externalInstance.PostgresqlID)
+		r.Recorder.Event(postgresql, corev1.EventTypeWarning,
+			"PasswordRotationFailed",
+			fmt.Sprintf("Failed to change password in PostgreSQL for %s: %v",
+				externalInstance.PostgresqlID, pgErr))
+		metrics.IncReconcileErrors("postgresql")
+		metrics.IncVaultPasswordRotation("pg_failed")
+		return
+	}
+
+	// PostgreSQL password changed successfully, now update Vault
+	rotateErr := rotateInstanceAdminPasswordWithRetry(
+		ctx, r.VaultClient, externalInstance.PostgresqlID, newPassword,
+		r.Log, r.VaultAvailabilityRetries,
+		r.VaultAvailabilityRetryDelay)
+	if rotateErr != nil {
+		r.Log.Errorw("Failed to rotate password in Vault after PostgreSQL change",
+			"error", rotateErr, "postgresqlID", externalInstance.PostgresqlID)
+		r.Recorder.Event(postgresql, corev1.EventTypeWarning,
+			"VaultRotationFailed",
+			fmt.Sprintf("Password changed in PostgreSQL but Vault update failed for %s: %v",
+				externalInstance.PostgresqlID, rotateErr))
+		metrics.IncVaultPasswordRotation("vault_failed")
+		return
+	}
+
+	r.Log.Infow("Instance admin password rotation completed successfully",
+		"postgresqlID", externalInstance.PostgresqlID)
+	r.Recorder.Event(postgresql, corev1.EventTypeNormal,
+		"PasswordRotated",
+		fmt.Sprintf("Instance admin password rotated for %s", externalInstance.PostgresqlID))
+	metrics.IncVaultPasswordRotation("success")
 }
 
 // updateConnectionStatus checks and updates the postgresql status fields.

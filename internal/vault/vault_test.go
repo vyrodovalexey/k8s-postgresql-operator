@@ -343,8 +343,8 @@ func TestGetPostgresqlCredentials_TableDriven(t *testing.T) {
 				jsonResponse(w, http.StatusOK, map[string]interface{}{
 					"data": map[string]interface{}{
 						"data": map[string]interface{}{
-							"admin_username": "pgadmin",
-							"admin_password": "supersecret",
+							"login":    "pgadmin",
+							"password": "supersecret",
 						},
 						"metadata": map[string]interface{}{
 							"version": 1,
@@ -357,7 +357,7 @@ func TestGetPostgresqlCredentials_TableDriven(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:         "read error - 404",
+			name:         "read error - 404 returns ErrSecretNotFound",
 			postgresqlID: "missing-pg",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
@@ -366,7 +366,7 @@ func TestGetPostgresqlCredentials_TableDriven(t *testing.T) {
 				})
 			},
 			wantErr:    true,
-			wantErrMsg: "failed to read secret from Vault",
+			wantErrMsg: "secret not found in Vault",
 		},
 		{
 			name:         "read error - 500",
@@ -392,16 +392,16 @@ func TestGetPostgresqlCredentials_TableDriven(t *testing.T) {
 				})
 			},
 			wantErr:    true,
-			wantErrMsg: "secret not found at path",
+			wantErrMsg: "secret not found in Vault",
 		},
 		{
-			name:         "missing admin_username",
+			name:         "missing login",
 			postgresqlID: "no-user-pg",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				jsonResponse(w, http.StatusOK, map[string]interface{}{
 					"data": map[string]interface{}{
 						"data": map[string]interface{}{
-							"admin_password": "pass123",
+							"password": "pass123",
 						},
 						"metadata": map[string]interface{}{"version": 1},
 					},
@@ -411,13 +411,13 @@ func TestGetPostgresqlCredentials_TableDriven(t *testing.T) {
 			wantErrMsg: "credentials not found in secret at path",
 		},
 		{
-			name:         "missing admin_password",
+			name:         "missing password",
 			postgresqlID: "no-pass-pg",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				jsonResponse(w, http.StatusOK, map[string]interface{}{
 					"data": map[string]interface{}{
 						"data": map[string]interface{}{
-							"admin_username": "admin",
+							"login": "admin",
 						},
 						"metadata": map[string]interface{}{"version": 1},
 					},
@@ -441,14 +441,14 @@ func TestGetPostgresqlCredentials_TableDriven(t *testing.T) {
 			wantErrMsg: "credentials not found in secret at path",
 		},
 		{
-			name:         "non-string username type",
+			name:         "non-string login type",
 			postgresqlID: "bad-type-pg",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				jsonResponse(w, http.StatusOK, map[string]interface{}{
 					"data": map[string]interface{}{
 						"data": map[string]interface{}{
-							"admin_username": 12345,
-							"admin_password": true,
+							"login":    12345,
+							"password": true,
 						},
 						"metadata": map[string]interface{}{"version": 1},
 					},
@@ -464,8 +464,8 @@ func TestGetPostgresqlCredentials_TableDriven(t *testing.T) {
 				jsonResponse(w, http.StatusOK, map[string]interface{}{
 					"data": map[string]interface{}{
 						"data": map[string]interface{}{
-							"admin_username": "",
-							"admin_password": "",
+							"login":    "",
+							"password": "",
 						},
 						"metadata": map[string]interface{}{"version": 1},
 					},
@@ -511,8 +511,8 @@ func TestGetPostgresqlCredentials_VerifyPath(t *testing.T) {
 			jsonResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "admin",
-						"admin_password": "pass",
+						"login":    "admin",
+						"password": "pass",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},
@@ -524,7 +524,7 @@ func TestGetPostgresqlCredentials_VerifyPath(t *testing.T) {
 	c := newTestClient(t, srv.URL, "secret", "pdb")
 	_, _, err := c.GetPostgresqlCredentials(context.Background(), "my-cluster")
 	require.NoError(t, err)
-	assert.Equal(t, "/v1/secret/data/pdb/my-cluster/admin", capturedPath)
+	assert.Equal(t, "/v1/secret/data/pdb/my-cluster/instance_admin", capturedPath)
 }
 
 // ---------- GetPostgresqlUserCredentials tests ----------
@@ -882,14 +882,14 @@ func TestGetPostgresqlCredentials_DifferentMountPoints(t *testing.T) {
 			mountPoint: "secret",
 			secretPath: "pdb",
 			pgID:       "cluster1",
-			wantPath:   "/v1/secret/data/pdb/cluster1/admin",
+			wantPath:   "/v1/secret/data/pdb/cluster1/instance_admin",
 		},
 		{
 			name:       "custom mount",
 			mountPoint: "kv",
 			secretPath: "databases/postgresql",
 			pgID:       "prod-db",
-			wantPath:   "/v1/kv/data/databases/postgresql/prod-db/admin",
+			wantPath:   "/v1/kv/data/databases/postgresql/prod-db/instance_admin",
 		},
 	}
 
@@ -902,8 +902,8 @@ func TestGetPostgresqlCredentials_DifferentMountPoints(t *testing.T) {
 					jsonResponse(w, http.StatusOK, map[string]interface{}{
 						"data": map[string]interface{}{
 							"data": map[string]interface{}{
-								"admin_username": "admin",
-								"admin_password": "pass",
+								"login":    "admin",
+								"password": "pass",
 							},
 							"metadata": map[string]interface{}{"version": 1},
 						},
@@ -1306,4 +1306,641 @@ func TestParsePKICertificateResponse_CAChain(t *testing.T) {
 	require.Len(t, cert.CAChain, 2)
 	assert.Equal(t, "ROOT-CA", cert.CAChain[0])
 	assert.Equal(t, "INTERMEDIATE-CA", cert.CAChain[1])
+}
+
+// ---------- GetDefaultCredentials tests ----------
+
+func TestGetDefaultCredentials_Success(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login":    "default-admin",
+						"password": "default-pass",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "default-admin", login)
+	assert.Equal(t, "default-pass", password)
+}
+
+func TestGetDefaultCredentials_VerifyPath(t *testing.T) {
+	var capturedPath string
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			capturedPath = r.URL.Path
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login":    "admin",
+						"password": "pass",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	_, _, err := c.GetDefaultCredentials(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/secret/data/pdb/default", capturedPath)
+}
+
+func TestGetDefaultCredentials_NotFound(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []string{"secret not found"},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.True(t, IsSecretNotFound(err))
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestGetDefaultCredentials_MissingLogin(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"password": "pass123",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "credentials not found in default secret at path")
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestGetDefaultCredentials_MissingPassword(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login": "admin",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "credentials not found in default secret at path")
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestGetDefaultCredentials_EmptyData(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data":     map[string]interface{}{},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "credentials not found in default secret at path")
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestGetDefaultCredentials_NilData(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data":     nil,
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.True(t, IsSecretNotFound(err))
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestGetDefaultCredentials_ConnectionRefused(t *testing.T) {
+	c := newTestClient(t, "http://127.0.0.1:1", "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read default credentials from Vault")
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestGetDefaultCredentials_NonStringTypes(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login":    12345,
+						"password": true,
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "credentials not found in default secret at path")
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+func TestGetDefaultCredentials_VaultError403(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []string{"permission denied"},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	login, password, err := c.GetDefaultCredentials(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read default credentials from Vault")
+	assert.Empty(t, login)
+	assert.Empty(t, password)
+}
+
+// ---------- StorePostgresqlCredentials tests ----------
+
+func TestStorePostgresqlCredentials_Success(t *testing.T) {
+	storeHandler := func(w http.ResponseWriter, r *http.Request) {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"data": map[string]interface{}{
+				"created_time":  "2024-01-01T00:00:00Z",
+				"deletion_time": "",
+				"destroyed":     false,
+				"version":       1,
+			},
+		})
+	}
+
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"PUT /v1/secret/data/":  storeHandler,
+		"POST /v1/secret/data/": storeHandler,
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.StorePostgresqlCredentials(context.Background(), "my-cluster", "admin", "secret123")
+
+	assert.NoError(t, err)
+}
+
+func TestStorePostgresqlCredentials_VerifyPathAndBody(t *testing.T) {
+	var capturedPath string
+	var capturedBody map[string]interface{}
+
+	storeHandler := func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"data": map[string]interface{}{
+				"version": 1,
+			},
+		})
+	}
+
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"PUT /v1/secret/data/":  storeHandler,
+		"POST /v1/secret/data/": storeHandler,
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.StorePostgresqlCredentials(context.Background(), "my-cluster", "myadmin", "mypassword")
+	require.NoError(t, err)
+
+	assert.Equal(t, "/v1/secret/data/pdb/my-cluster/instance_admin", capturedPath)
+
+	// Verify the body contains login and password in the data field
+	if data, ok := capturedBody["data"].(map[string]interface{}); ok {
+		assert.Equal(t, "myadmin", data["login"])
+		assert.Equal(t, "mypassword", data["password"])
+	} else {
+		t.Fatal("expected data field in request body")
+	}
+}
+
+func TestStorePostgresqlCredentials_WriteError403(t *testing.T) {
+	failHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"errors": []string{"permission denied"},
+		})
+	}
+
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"PUT /v1/secret/data/":  failHandler,
+		"POST /v1/secret/data/": failHandler,
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.StorePostgresqlCredentials(context.Background(), "my-cluster", "admin", "pass")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to store instance admin credentials in Vault")
+}
+
+func TestStorePostgresqlCredentials_WriteError500(t *testing.T) {
+	failHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"errors": []string{"internal error"},
+		})
+	}
+
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"PUT /v1/secret/data/":  failHandler,
+		"POST /v1/secret/data/": failHandler,
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.StorePostgresqlCredentials(context.Background(), "my-cluster", "admin", "pass")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to store instance admin credentials in Vault")
+}
+
+func TestStorePostgresqlCredentials_ConnectionRefused(t *testing.T) {
+	c := newTestClient(t, "http://127.0.0.1:1", "secret", "pdb")
+	err := c.StorePostgresqlCredentials(context.Background(), "my-cluster", "admin", "pass")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to store instance admin credentials in Vault")
+}
+
+// ---------- GetInstanceAdminNewPassword tests ----------
+
+func TestGetInstanceAdminNewPassword_Success(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login":        "admin",
+						"password":     "oldpass",
+						"new_password": "newpass123",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	newPass, err := c.GetInstanceAdminNewPassword(context.Background(), "my-cluster")
+
+	require.NoError(t, err)
+	assert.Equal(t, "newpass123", newPass)
+}
+
+func TestGetInstanceAdminNewPassword_NotPresent(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login":    "admin",
+						"password": "currentpass",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	newPass, err := c.GetInstanceAdminNewPassword(context.Background(), "my-cluster")
+
+	require.NoError(t, err)
+	assert.Empty(t, newPass)
+}
+
+func TestGetInstanceAdminNewPassword_SecretNotFound(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []string{"secret not found"},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	newPass, err := c.GetInstanceAdminNewPassword(context.Background(), "my-cluster")
+
+	require.Error(t, err)
+	assert.True(t, IsSecretNotFound(err))
+	assert.Empty(t, newPass)
+}
+
+func TestGetInstanceAdminNewPassword_VaultError(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []string{"permission denied"},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	newPass, err := c.GetInstanceAdminNewPassword(context.Background(), "my-cluster")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read instance admin secret from Vault")
+	assert.Empty(t, newPass)
+}
+
+// ---------- RotateInstanceAdminPassword tests ----------
+
+func TestRotateInstanceAdminPassword_Success(t *testing.T) {
+	var capturedWritePath string
+	var capturedWriteBody map[string]interface{}
+
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login":        "admin",
+						"password":     "oldpass",
+						"new_password": "newpass",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+		"PUT /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			capturedWritePath = r.URL.Path
+			_ = json.NewDecoder(r.Body).Decode(&capturedWriteBody)
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{"version": 2},
+			})
+		},
+		"POST /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			capturedWritePath = r.URL.Path
+			_ = json.NewDecoder(r.Body).Decode(&capturedWriteBody)
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{"version": 2},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.RotateInstanceAdminPassword(context.Background(), "my-cluster", "newpass")
+
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/secret/data/pdb/my-cluster/instance_admin", capturedWritePath)
+
+	// Verify the written body has login + password, no new_password
+	if data, ok := capturedWriteBody["data"].(map[string]interface{}); ok {
+		assert.Equal(t, "admin", data["login"])
+		assert.Equal(t, "newpass", data["password"])
+		_, hasNewPassword := data["new_password"]
+		assert.False(t, hasNewPassword, "new_password should not be present after rotation")
+	} else {
+		t.Fatal("expected data field in request body")
+	}
+}
+
+func TestRotateInstanceAdminPassword_ReadFails(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []string{"permission denied"},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.RotateInstanceAdminPassword(context.Background(), "my-cluster", "newpass")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read instance admin secret for rotation")
+}
+
+func TestRotateInstanceAdminPassword_WriteFails(t *testing.T) {
+	failHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"errors": []string{"permission denied"},
+		})
+	}
+
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"login":    "admin",
+						"password": "oldpass",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+		"PUT /v1/secret/data/":  failHandler,
+		"POST /v1/secret/data/": failHandler,
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.RotateInstanceAdminPassword(context.Background(), "my-cluster", "newpass")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to rotate instance admin password in Vault")
+}
+
+func TestRotateInstanceAdminPassword_LoginMissing(t *testing.T) {
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"password": "oldpass",
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	err := c.RotateInstanceAdminPassword(context.Background(), "my-cluster", "newpass")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "login not found in instance admin secret")
+}
+
+func TestRotateInstanceAdminPassword_ConnectionRefused(t *testing.T) {
+	c := newTestClient(t, "http://127.0.0.1:1", "secret", "pdb")
+	err := c.RotateInstanceAdminPassword(context.Background(), "my-cluster", "newpass")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read instance admin secret for rotation")
+}
+
+// ---------- IsSecretNotFound tests ----------
+
+func TestIsSecretNotFound_WithErrSecretNotFound(t *testing.T) {
+	assert.True(t, IsSecretNotFound(ErrSecretNotFound))
+}
+
+func TestIsSecretNotFound_WithWrappedErrSecretNotFound(t *testing.T) {
+	wrapped := fmt.Errorf("some context: %w", ErrSecretNotFound)
+	assert.True(t, IsSecretNotFound(wrapped))
+}
+
+func TestIsSecretNotFound_WithOtherError(t *testing.T) {
+	assert.False(t, IsSecretNotFound(fmt.Errorf("some other error")))
+}
+
+func TestIsSecretNotFound_WithNilError(t *testing.T) {
+	assert.False(t, IsSecretNotFound(nil))
+}
+
+// ---------- isVaultNotFoundError tests (via public API) ----------
+
+func TestIsVaultNotFoundError_Via404Response(t *testing.T) {
+	// Test that a 404 from Vault results in ErrSecretNotFound
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []string{"no secret at this path"},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	_, _, err := c.GetPostgresqlCredentials(context.Background(), "nonexistent")
+
+	require.Error(t, err)
+	assert.True(t, IsSecretNotFound(err), "404 should result in ErrSecretNotFound")
+}
+
+func TestIsVaultNotFoundError_Via403Response(t *testing.T) {
+	// Test that a 403 from Vault does NOT result in ErrSecretNotFound
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []string{"permission denied"},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	_, _, err := c.GetPostgresqlCredentials(context.Background(), "forbidden")
+
+	require.Error(t, err)
+	assert.False(t, IsSecretNotFound(err), "403 should NOT result in ErrSecretNotFound")
+}
+
+func TestIsVaultNotFoundError_ViaConnectionRefused(t *testing.T) {
+	// Test that connection refused does NOT result in ErrSecretNotFound
+	c := newTestClient(t, "http://127.0.0.1:1", "secret", "pdb")
+	_, _, err := c.GetPostgresqlCredentials(context.Background(), "any")
+
+	require.Error(t, err)
+	assert.False(t, IsSecretNotFound(err), "connection refused should NOT result in ErrSecretNotFound")
+}
+
+func TestIsVaultNotFoundError_ViaNilData(t *testing.T) {
+	// Test that nil data results in ErrSecretNotFound
+	srv := newMockVaultServer(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data":     nil,
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, "secret", "pdb")
+	_, _, err := c.GetPostgresqlCredentials(context.Background(), "nil-data")
+
+	require.Error(t, err)
+	assert.True(t, IsSecretNotFound(err), "nil data should result in ErrSecretNotFound")
 }

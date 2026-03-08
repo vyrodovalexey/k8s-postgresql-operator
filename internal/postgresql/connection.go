@@ -149,6 +149,42 @@ func TestConnection(
 	)
 }
 
+// resolveVaultCredentials resolves credentials from Vault with fallback to default credentials.
+// First tries instance_admin, then falls back to default credentials if not found.
+func resolveVaultCredentials(
+	ctx context.Context, vaultClient *vault.Client,
+	postgresqlID string, log *zap.SugaredLogger,
+) (login, password string, err error) {
+	username, password, err := vaultClient.GetPostgresqlCredentials(ctx, postgresqlID)
+	if err == nil {
+		log.Debugw("Credentials retrieved from Vault",
+			"postgresqlID", postgresqlID)
+		return username, password, nil
+	}
+
+	// If instance_admin secret not found, try default credentials
+	if vault.IsSecretNotFound(err) {
+		log.Infow("Instance admin credentials not found, trying default credentials",
+			"postgresqlID", postgresqlID)
+		defaultLogin, defaultPassword, defaultErr := vaultClient.GetDefaultCredentials(ctx)
+		if defaultErr != nil {
+			log.Warnw("Failed to get default credentials from Vault",
+				"postgresqlID", postgresqlID, "error", defaultErr)
+			return "", "", fmt.Errorf(
+				"no credentials available: instance_admin not found, "+
+					"default credentials also unavailable: %w", defaultErr)
+		}
+		log.Infow("Using default credentials for connection test",
+			"postgresqlID", postgresqlID)
+		return defaultLogin, defaultPassword, nil
+	}
+
+	// Vault error (not a 404) - don't fallback
+	log.Warnw("Failed to get credentials from Vault",
+		"postgresqlID", postgresqlID, "error", err)
+	return "", "", fmt.Errorf("failed to get credentials from Vault: %w", err)
+}
+
 // TestConnectionFromPostgresql tests the connection to a PostgreSQL instance from a Postgresql CRD
 func TestConnectionFromPostgresql(
 	ctx context.Context, postgresql *instancev1alpha1.Postgresql, vaultClient *vault.Client,
@@ -175,22 +211,16 @@ func TestConnectionFromPostgresql(
 	database := DefaultDB
 
 	// Get credentials from Vault if available
-	var username, password string
-	if vaultClient != nil {
-		vaultUsername, vaultPassword, err := vaultClient.GetPostgresqlCredentials(ctx, externalInstance.PostgresqlID)
-		if err != nil {
-			log.Warnw("Failed to get credentials from Vault, connection test may fail",
-				"postgresqlID", externalInstance.PostgresqlID, "error", err)
-			return fmt.Errorf("failed to get credentials from Vault: %w", err)
-		}
-		username = vaultUsername
-		password = vaultPassword
-		log.Debugw("Credentials retrieved from Vault", "postgresqlID", externalInstance.PostgresqlID)
-	} else {
-		// Vault client not configured, skip connection test
+	if vaultClient == nil {
 		log.Warnw("Vault client not configured, skipping PostgreSQL connection test",
 			"postgresqlID", externalInstance.PostgresqlID)
 		return nil
+	}
+
+	username, password, credErr := resolveVaultCredentials(
+		ctx, vaultClient, externalInstance.PostgresqlID, log)
+	if credErr != nil {
+		return credErr
 	}
 
 	// If no credentials from Vault, we cannot test the connection

@@ -338,10 +338,10 @@ func TestPostgresqlReconciler_Reconcile_WithExternalInstance(t *testing.T) {
 			VaultClient:                 nil, // No vault client for this test
 			Log:                         logger,
 			Recorder:                    record.NewFakeRecorder(100),
-			PostgresqlConnectionRetries: 3,
-			PostgresqlConnectionTimeout: 10 * time.Second,
-			VaultAvailabilityRetries:    3,
-			VaultAvailabilityRetryDelay: 10 * time.Second,
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 1 * time.Millisecond,
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
 		},
 	}
 

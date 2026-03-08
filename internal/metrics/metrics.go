@@ -77,6 +77,24 @@ var (
 		},
 		[]string{"controller"},
 	)
+
+	// VaultCredentialResolution tracks credential resolution outcomes
+	VaultCredentialResolution = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_vault_credential_resolution_total",
+			Help: "Total number of Vault credential resolution attempts by source",
+		},
+		[]string{"source"}, // "instance_admin", "default", "none"
+	)
+
+	// VaultPasswordRotation tracks password rotation outcomes
+	VaultPasswordRotation = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "postgresql_operator_vault_password_rotation_total",
+			Help: "Total number of password rotation attempts by result",
+		},
+		[]string{"result"}, // "success", "pg_failed", "vault_failed"
+	)
 )
 
 func init() {
@@ -87,6 +105,8 @@ func init() {
 	metrics.Registry.MustRegister(ReconcileDuration)
 	metrics.Registry.MustRegister(ReconcileErrors)
 	metrics.Registry.MustRegister(ReconcileTotal)
+	metrics.Registry.MustRegister(VaultCredentialResolution)
+	metrics.Registry.MustRegister(VaultPasswordRotation)
 }
 
 // UpdatePostgresqlCount updates the total number of PostgreSQL instances
@@ -129,4 +149,14 @@ func IncReconcileErrors(controller string) {
 // IncReconcileTotal increments the total reconciliation counter for the given controller
 func IncReconcileTotal(controller string) {
 	ReconcileTotal.WithLabelValues(controller).Inc()
+}
+
+// IncVaultCredentialResolution increments the Vault credential resolution counter for the given source
+func IncVaultCredentialResolution(source string) {
+	VaultCredentialResolution.WithLabelValues(source).Inc()
+}
+
+// IncVaultPasswordRotation increments the Vault password rotation counter for the given result
+func IncVaultPasswordRotation(result string) {
+	VaultPasswordRotation.WithLabelValues(result).Inc()
 }

@@ -621,8 +621,9 @@ make setup-vault
 
 This runs `test/scripts/setup-vault.sh` which:
 - Enables the KV v2 secrets engine at the `secret` mount
-- Stores admin credentials at `secret/pdb/<instance-id>/admin`
-- Stores test user credentials at `secret/pdb/<instance-id>/<username>`
+- Stores default credentials at `secret/pdb/default` (with `login`/`password` keys)
+- Stores instance admin credentials at `secret/pdb/<instance-id>/instance_admin` (with `login`/`password` keys)
+- Stores test user credentials at `secret/pdb/<instance-id>/<username>` (with `password` key)
 - Creates the `k8s-postgresql-operator-kv` Vault policy
 
 Environment variables accepted by the script:

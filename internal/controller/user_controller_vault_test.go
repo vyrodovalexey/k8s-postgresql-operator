@@ -334,9 +334,8 @@ func TestUserReconciler_Reconcile_WithVaultClient_ConnectedPG(t *testing.T) {
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "admin",
-						"admin_password": "adminpass",
-						"password":       "userpass",
+						"login":    "admin",
+						"password": "userpass",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},
@@ -387,6 +386,231 @@ func TestUserReconciler_Reconcile_WithVaultClient_ConnectedPG(t *testing.T) {
 	mockStatus.AssertExpectations(t)
 }
 
+// ---------- computePasswordHash tests ----------
+
+func TestComputePasswordHash(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+	}{
+		{
+			name:     "Simple password",
+			password: "testpassword",
+		},
+		{
+			name:     "Empty password",
+			password: "",
+		},
+		{
+			name:     "Special characters",
+			password: "p@$$w0rd!#%^&*()",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hash := computePasswordHash(tt.password)
+			assert.NotEmpty(t, hash)
+			assert.Len(t, hash, 64) // SHA-256 hex is 64 chars
+
+			// Same input should produce same hash (deterministic)
+			hash2 := computePasswordHash(tt.password)
+			assert.Equal(t, hash, hash2)
+		})
+	}
+
+	// Different passwords should produce different hashes
+	hash1 := computePasswordHash("password1")
+	hash2 := computePasswordHash("password2")
+	assert.NotEqual(t, hash1, hash2)
+}
+
+// ---------- handleVaultUserPassword hash comparison tests ----------
+
+func TestUserReconciler_HandleVaultUserPassword_UnchangedHash(t *testing.T) {
+	// Scenario: credentials exist in Vault, updatePassword is false,
+	// hash matches LastAppliedPasswordHash -> returns password (no PG update needed)
+	existingPassword := "existing-password"
+	existingHash := computePasswordHash(existingPassword)
+
+	vaultClient, srv := newTestVaultClient(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"password": existingPassword,
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	reconciler := &UserReconciler{
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			VaultClient:                 vaultClient,
+			Log:                         zap.NewNop().Sugar(),
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	user := &instancev1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{Name: "u1", Namespace: "default"},
+		Spec: instancev1alpha1.UserSpec{
+			PostgresqlID:   "test-id",
+			Username:       "testuser",
+			UpdatePassword: false,
+		},
+		Status: instancev1alpha1.UserStatus{
+			LastAppliedPasswordHash: existingHash,
+		},
+	}
+
+	password := reconciler.handleVaultUserPassword(context.Background(), user)
+	assert.Equal(t, existingPassword, password)
+}
+
+func TestUserReconciler_HandleVaultUserPassword_ChangedHash(t *testing.T) {
+	// Scenario: credentials exist in Vault, updatePassword is false,
+	// hash differs from LastAppliedPasswordHash -> returns password for PG update
+	newVaultPassword := "new-vault-password"
+	oldHash := computePasswordHash("old-password")
+
+	vaultClient, srv := newTestVaultClient(t, map[string]http.HandlerFunc{
+		"GET /v1/secret/data/": func(w http.ResponseWriter, r *http.Request) {
+			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
+				"data": map[string]interface{}{
+					"data": map[string]interface{}{
+						"password": newVaultPassword,
+					},
+					"metadata": map[string]interface{}{"version": 1},
+				},
+			})
+		},
+	})
+	defer srv.Close()
+
+	reconciler := &UserReconciler{
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			VaultClient:                 vaultClient,
+			Log:                         zap.NewNop().Sugar(),
+			VaultAvailabilityRetries:    1,
+			VaultAvailabilityRetryDelay: 1 * time.Millisecond,
+		},
+	}
+
+	user := &instancev1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{Name: "u1", Namespace: "default"},
+		Spec: instancev1alpha1.UserSpec{
+			PostgresqlID:   "test-id",
+			Username:       "testuser",
+			UpdatePassword: false,
+		},
+		Status: instancev1alpha1.UserStatus{
+			LastAppliedPasswordHash: oldHash,
+		},
+	}
+
+	password := reconciler.handleVaultUserPassword(context.Background(), user)
+	assert.Equal(t, newVaultPassword, password)
+}
+
+// ---------- syncUser with password hash storage ----------
+
+func TestUserReconciler_SyncUser_StoresPasswordHash(t *testing.T) {
+	// When syncUser succeeds with a non-empty password, it should store the hash
+	pgServer := newMockPGServer(t, true)
+	defer pgServer.close()
+
+	mockClient := new(MockControllerClient)
+	mockStatus := new(MockStatusWriter)
+
+	mockClient.On("Status").Return(mockStatus)
+	mockStatus.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	reconciler := &UserReconciler{
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         zap.NewNop().Sugar(),
+			Recorder:                    record.NewFakeRecorder(100),
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 5 * time.Second,
+		},
+	}
+
+	user := &instancev1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{Name: "u1", Namespace: "default"},
+		Spec: instancev1alpha1.UserSpec{
+			PostgresqlID: "test-id",
+			Username:     "testuser",
+		},
+	}
+
+	info := &connectionInfo{
+		ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+			PostgresqlID: "test-id",
+			Address:      "127.0.0.1",
+		},
+		Port:     pgServer.port,
+		SSLMode:  "disable",
+		Username: "admin",
+		Password: "secret",
+	}
+
+	_, err := reconciler.syncUser(context.Background(), user, info, "testpassword")
+	assert.NoError(t, err)
+	assert.True(t, user.Status.Created)
+	assert.Equal(t, computePasswordHash("testpassword"), user.Status.LastAppliedPasswordHash)
+}
+
+func TestUserReconciler_SyncUser_EmptyPasswordNoHash(t *testing.T) {
+	// When syncUser succeeds with empty password, LastAppliedPasswordHash should not be set
+	pgServer := newMockPGServer(t, true)
+	defer pgServer.close()
+
+	mockClient := new(MockControllerClient)
+	mockStatus := new(MockStatusWriter)
+
+	mockClient.On("Status").Return(mockStatus)
+	mockStatus.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	reconciler := &UserReconciler{
+		BaseReconcilerConfig: BaseReconcilerConfig{
+			Client:                      mockClient,
+			Log:                         zap.NewNop().Sugar(),
+			Recorder:                    record.NewFakeRecorder(100),
+			PostgresqlConnectionRetries: 1,
+			PostgresqlConnectionTimeout: 5 * time.Second,
+		},
+	}
+
+	user := &instancev1alpha1.User{
+		ObjectMeta: metav1.ObjectMeta{Name: "u1", Namespace: "default"},
+		Spec: instancev1alpha1.UserSpec{
+			PostgresqlID: "test-id",
+			Username:     "testuser",
+		},
+	}
+
+	info := &connectionInfo{
+		ExternalInstance: &instancev1alpha1.ExternalPostgresqlInstance{
+			PostgresqlID: "test-id",
+			Address:      "127.0.0.1",
+		},
+		Port:     pgServer.port,
+		SSLMode:  "disable",
+		Username: "admin",
+		Password: "secret",
+	}
+
+	_, err := reconciler.syncUser(context.Background(), user, info, "")
+	assert.NoError(t, err)
+	assert.True(t, user.Status.Created)
+	assert.Empty(t, user.Status.LastAppliedPasswordHash)
+}
+
 func TestUserReconciler_Reconcile_WithVaultClient_VaultGetFails(t *testing.T) {
 	mockClient := new(MockControllerClient)
 	mockStatus := new(MockStatusWriter)
@@ -411,8 +635,8 @@ func TestUserReconciler_Reconcile_WithVaultClient_VaultGetFails(t *testing.T) {
 				vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 					"data": map[string]interface{}{
 						"data": map[string]interface{}{
-							"admin_username": "admin",
-							"admin_password": "adminpass",
+							"login":    "admin",
+							"password": "adminpass",
 						},
 						"metadata": map[string]interface{}{"version": 1},
 					},

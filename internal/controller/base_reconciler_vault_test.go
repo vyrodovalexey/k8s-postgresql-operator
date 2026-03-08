@@ -35,8 +35,8 @@ func TestResolveAdminCredentials_WithVaultClient_Success(t *testing.T) {
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "pgadmin",
-						"admin_password": "supersecret",
+						"login":    "pgadmin",
+						"password": "supersecret",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},

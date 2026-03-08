@@ -19,12 +19,36 @@ package vault
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
 )
+
+// ErrSecretNotFound indicates the secret path does not exist in Vault
+var ErrSecretNotFound = fmt.Errorf("secret not found in Vault")
+
+// IsSecretNotFound checks if the error indicates a missing secret
+func IsSecretNotFound(err error) bool {
+	return errors.Is(err, ErrSecretNotFound)
+}
+
+// isVaultNotFoundError checks if the error from Vault indicates a 404 (secret not found)
+func isVaultNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var respErr *api.ResponseError
+	if errors.As(err, &respErr) {
+		return respErr.StatusCode == http.StatusNotFound
+	}
+	// Fallback: check error message for common "not found" patterns
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "secret not found")
+}
 
 // Client wraps the Vault API client
 type Client struct {
@@ -90,33 +114,142 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	return nil
 }
 
-// GetPostgresqlCredentials retrieves PostgreSQL credentials from Vault KV store
+// GetPostgresqlCredentials retrieves PostgreSQL instance admin credentials from Vault KV store
 func (c *Client) GetPostgresqlCredentials(
-	ctx context.Context, postgresqlID string) (username, password string, err error) {
-	kv2Path := fmt.Sprintf("%s/%s/admin", c.vaultSecretPath, postgresqlID)
+	ctx context.Context, postgresqlID string) (login, password string, err error) {
+	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
 
-	// Use KVv2 to read the secret
 	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
 	if err != nil {
+		if isVaultNotFoundError(err) {
+			return "", "", fmt.Errorf("instance admin credentials at path %s: %w", kv2Path, ErrSecretNotFound)
+		}
 		return "", "", fmt.Errorf("failed to read secret from Vault: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return "", "", fmt.Errorf("secret not found at path: %s", kv2Path)
+		return "", "", fmt.Errorf("instance admin credentials at path %s: %w", kv2Path, ErrSecretNotFound)
 	}
 
-	if u, ok := secret.Data["admin_username"].(string); ok {
-		username = u
+	if u, ok := secret.Data["login"].(string); ok {
+		login = u
 	}
-	if p, ok := secret.Data["admin_password"].(string); ok {
+	if p, ok := secret.Data["password"].(string); ok {
 		password = p
 	}
 
-	if username == "" || password == "" {
+	if login == "" || password == "" {
 		return "", "", fmt.Errorf("credentials not found in secret at path: %s", kv2Path)
 	}
 
-	return username, password, nil
+	return login, password, nil
+}
+
+// GetDefaultCredentials retrieves default PostgreSQL credentials from Vault KV store
+// These are used as fallback when instance-specific credentials don't exist
+func (c *Client) GetDefaultCredentials(ctx context.Context) (login, password string, err error) {
+	kv2Path := fmt.Sprintf("%s/default", c.vaultSecretPath)
+
+	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
+	if err != nil {
+		if isVaultNotFoundError(err) {
+			return "", "", fmt.Errorf("default credentials at path %s: %w", kv2Path, ErrSecretNotFound)
+		}
+		return "", "", fmt.Errorf("failed to read default credentials from Vault: %w", err)
+	}
+
+	if secret == nil || secret.Data == nil {
+		return "", "", fmt.Errorf("default credentials at path %s: %w", kv2Path, ErrSecretNotFound)
+	}
+
+	if u, ok := secret.Data["login"].(string); ok {
+		login = u
+	}
+	if p, ok := secret.Data["password"].(string); ok {
+		password = p
+	}
+
+	if login == "" || password == "" {
+		return "", "", fmt.Errorf("credentials not found in default secret at path: %s", kv2Path)
+	}
+
+	return login, password, nil
+}
+
+// StorePostgresqlCredentials stores PostgreSQL instance admin credentials in Vault KV store
+func (c *Client) StorePostgresqlCredentials(ctx context.Context, postgresqlID, login, password string) error {
+	data := map[string]interface{}{
+		"login":    login,
+		"password": password,
+	}
+
+	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
+	_, err := c.client.KVv2(c.vaultMountPoint).Put(ctx, kv2Path, data)
+	if err != nil {
+		return fmt.Errorf("failed to store instance admin credentials in Vault: %w", err)
+	}
+
+	return nil
+}
+
+// GetInstanceAdminNewPassword retrieves the new_password field from instance admin secret
+// Returns empty string and nil error if the field doesn't exist (no rotation needed)
+// Returns error only if Vault is unavailable or the secret itself doesn't exist
+func (c *Client) GetInstanceAdminNewPassword(ctx context.Context, postgresqlID string) (string, error) {
+	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
+
+	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
+	if err != nil {
+		if isVaultNotFoundError(err) {
+			return "", fmt.Errorf("instance admin secret at path %s: %w", kv2Path, ErrSecretNotFound)
+		}
+		return "", fmt.Errorf("failed to read instance admin secret from Vault: %w", err)
+	}
+
+	if secret == nil || secret.Data == nil {
+		return "", fmt.Errorf("instance admin secret at path %s: %w", kv2Path, ErrSecretNotFound)
+	}
+
+	// new_password is optional - return empty string if not present
+	if newPass, ok := secret.Data["new_password"].(string); ok && newPass != "" {
+		return newPass, nil
+	}
+
+	return "", nil
+}
+
+// RotateInstanceAdminPassword atomically rotates the instance admin password in Vault
+// It reads the current login, then writes login + new password (removing new_password field)
+func (c *Client) RotateInstanceAdminPassword(ctx context.Context, postgresqlID, newPassword string) error {
+	kv2Path := fmt.Sprintf("%s/%s/instance_admin", c.vaultSecretPath, postgresqlID)
+
+	// Read current secret to preserve the login
+	secret, err := c.client.KVv2(c.vaultMountPoint).Get(ctx, kv2Path)
+	if err != nil {
+		return fmt.Errorf("failed to read instance admin secret for rotation: %w", err)
+	}
+
+	if secret == nil || secret.Data == nil {
+		return fmt.Errorf("instance admin secret not found for rotation at path: %s", kv2Path)
+	}
+
+	login, ok := secret.Data["login"].(string)
+	if !ok || login == "" {
+		return fmt.Errorf("login not found in instance admin secret at path: %s", kv2Path)
+	}
+
+	// Write back with updated password and no new_password field
+	data := map[string]interface{}{
+		"login":    login,
+		"password": newPassword,
+	}
+
+	_, err = c.client.KVv2(c.vaultMountPoint).Put(ctx, kv2Path, data)
+	if err != nil {
+		return fmt.Errorf("failed to rotate instance admin password in Vault: %w", err)
+	}
+
+	return nil
 }
 
 // GetPostgresqlUserCredentials retrieves PostgreSQL credentials from Vault KV store
@@ -145,7 +278,7 @@ func (c *Client) GetPostgresqlUserCredentials(
 	return password, nil
 }
 
-// StorePostgresqlUserCredentials
+// StorePostgresqlUserCredentials stores PostgreSQL user credentials in Vault KV store
 func (c *Client) StorePostgresqlUserCredentials(ctx context.Context, postgresqlID, username, password string) error {
 	// Prepare the data to store
 	data := map[string]interface{}{

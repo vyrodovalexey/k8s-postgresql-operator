@@ -119,6 +119,11 @@ spec:
                 description: Created indicates whether the user has been successfully
                   created in PostgreSQL
                 type: boolean
+              lastAppliedPasswordHash:
+                description: |-
+                  LastAppliedPasswordHash is the SHA-256 hash of the last password applied to PostgreSQL
+                  Used to detect external Vault password changes
+                type: string
               lastSyncAttempt:
                 description: LastSyncAttempt is the timestamp of the last sync attempt
                 format: date-time

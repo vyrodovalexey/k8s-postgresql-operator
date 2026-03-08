@@ -69,26 +69,26 @@ func TestIntegration_VaultCredentialFlow(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_ = vaultClient.DeleteSecret(cleanupCtx, "secret", fmt.Sprintf("pdb/%s/admin", postgresqlID))
+		_ = vaultClient.DeleteSecret(cleanupCtx, "secret", fmt.Sprintf("pdb/%s/instance_admin", postgresqlID))
 		_ = pgCfg.DropTestUser(cleanupCtx, username)
 	})
 
 	// Step 1: Store admin credentials in Vault
 	adminData := map[string]interface{}{
-		"admin_username": pgCfg.User,
-		"admin_password": pgCfg.Password,
+		"login":    pgCfg.User,
+		"password": pgCfg.Password,
 	}
-	err := vaultClient.WriteSecret(ctx, "secret", fmt.Sprintf("pdb/%s/admin", postgresqlID), adminData)
+	err := vaultClient.WriteSecret(ctx, "secret", fmt.Sprintf("pdb/%s/instance_admin", postgresqlID), adminData)
 	require.NoError(t, err, "Storing admin credentials in Vault should succeed")
 
 	// Step 2: Retrieve credentials from Vault
-	readData, err := vaultClient.ReadSecret(ctx, "secret", fmt.Sprintf("pdb/%s/admin", postgresqlID))
+	readData, err := vaultClient.ReadSecret(ctx, "secret", fmt.Sprintf("pdb/%s/instance_admin", postgresqlID))
 	require.NoError(t, err, "Reading admin credentials from Vault should succeed")
 
-	adminUser, ok := readData["admin_username"].(string)
-	require.True(t, ok, "admin_username should be a string")
-	adminPass, ok := readData["admin_password"].(string)
-	require.True(t, ok, "admin_password should be a string")
+	adminUser, ok := readData["login"].(string)
+	require.True(t, ok, "login should be a string")
+	adminPass, ok := readData["password"].(string)
+	require.True(t, ok, "password should be a string")
 
 	assert.Equal(t, pgCfg.User, adminUser)
 	assert.Equal(t, pgCfg.Password, adminPass)
@@ -210,29 +210,29 @@ func TestIntegration_VaultAdminCredentials(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		_ = vaultClient.DeleteSecret(cleanupCtx, "secret", fmt.Sprintf("pdb/%s/admin", postgresqlID))
+		_ = vaultClient.DeleteSecret(cleanupCtx, "secret", fmt.Sprintf("pdb/%s/instance_admin", postgresqlID))
 	})
 
 	// Store admin credentials in the format expected by vault.Client.GetPostgresqlCredentials
 	adminData := map[string]interface{}{
-		"admin_username": pgCfg.User,
-		"admin_password": pgCfg.Password,
+		"login":    pgCfg.User,
+		"password": pgCfg.Password,
 	}
-	err := vaultClient.WriteSecret(ctx, "secret", fmt.Sprintf("pdb/%s/admin", postgresqlID), adminData)
+	err := vaultClient.WriteSecret(ctx, "secret", fmt.Sprintf("pdb/%s/instance_admin", postgresqlID), adminData)
 	require.NoError(t, err, "Storing admin credentials should succeed")
 
 	// Read back and verify the format matches what GetPostgresqlCredentials expects
-	readData, err := vaultClient.ReadSecret(ctx, "secret", fmt.Sprintf("pdb/%s/admin", postgresqlID))
+	readData, err := vaultClient.ReadSecret(ctx, "secret", fmt.Sprintf("pdb/%s/instance_admin", postgresqlID))
 	require.NoError(t, err, "Reading admin credentials should succeed")
 
 	// Verify the keys match what vault.Client.GetPostgresqlCredentials looks for
-	adminUsername, ok := readData["admin_username"].(string)
-	require.True(t, ok, "admin_username key should exist and be a string")
-	assert.NotEmpty(t, adminUsername, "admin_username should not be empty")
+	adminUsername, ok := readData["login"].(string)
+	require.True(t, ok, "login key should exist and be a string")
+	assert.NotEmpty(t, adminUsername, "login should not be empty")
 
-	adminPassword, ok := readData["admin_password"].(string)
-	require.True(t, ok, "admin_password key should exist and be a string")
-	assert.NotEmpty(t, adminPassword, "admin_password should not be empty")
+	adminPassword, ok := readData["password"].(string)
+	require.True(t, ok, "password key should exist and be a string")
+	assert.NotEmpty(t, adminPassword, "password should not be empty")
 
 	assert.Equal(t, pgCfg.User, adminUsername)
 	assert.Equal(t, pgCfg.Password, adminPassword)

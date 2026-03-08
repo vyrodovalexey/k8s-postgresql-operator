@@ -11,6 +11,6 @@ spec:
   owner: "testuser"
   schema: "public"
   # Create database from a template database
-  dbTemplate: "template_db"
+  dbTemplate: "template0"
   # Delete database from PostgreSQL when CRD is deleted
   deleteFromCRD: true

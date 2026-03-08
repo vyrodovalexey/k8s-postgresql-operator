@@ -45,8 +45,8 @@ func TestDatabaseReconciler_ResolveDeletionConnection_WithVault_Success(t *testi
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "pgadmin",
-						"admin_password": "supersecret",
+						"login":    "pgadmin",
+						"password": "supersecret",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},
@@ -155,8 +155,8 @@ func TestDatabaseReconciler_HandleDeletion_WithVault_DeleteFromCRD_PGFound_Vault
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "pgadmin",
-						"admin_password": "supersecret",
+						"login":    "pgadmin",
+						"password": "supersecret",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},
@@ -221,8 +221,8 @@ func TestDatabaseReconciler_HandleDeletion_WithVault_DeleteFails_StatusUpdateFai
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "pgadmin",
-						"admin_password": "supersecret",
+						"login":    "pgadmin",
+						"password": "supersecret",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},
@@ -288,8 +288,8 @@ func TestDatabaseReconciler_Reconcile_WithVault_ConnectedPG(t *testing.T) {
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "admin",
-						"admin_password": "adminpass",
+						"login":    "admin",
+						"password": "adminpass",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},
@@ -346,8 +346,8 @@ func TestDatabaseReconciler_Reconcile_WithDeletion_VaultSuccess_PGDeleteFails(t 
 			vaultJSONResponse(w, http.StatusOK, map[string]interface{}{
 				"data": map[string]interface{}{
 					"data": map[string]interface{}{
-						"admin_username": "admin",
-						"admin_password": "adminpass",
+						"login":    "admin",
+						"password": "adminpass",
 					},
 					"metadata": map[string]interface{}{"version": 1},
 				},

@@ -74,14 +74,21 @@ verify_kv_engine() {
 # Store test secrets
 # ---------------------------------------------------------------------------
 store_secrets() {
-    local admin_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/${PG_INSTANCE_ID}/admin"
+    local default_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/default"
+    local admin_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/${PG_INSTANCE_ID}/instance_admin"
     local user_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/${PG_INSTANCE_ID}/${TEST_USERNAME}"
 
-    info "Storing admin credentials at '${admin_path}'..."
+    info "Storing default credentials at '${default_path}'..."
+    vault kv put "${default_path}" \
+        login="${ADMIN_USERNAME}" \
+        password="${ADMIN_PASSWORD}"
+    info "Default credentials stored successfully"
+
+    info "Storing instance admin credentials at '${admin_path}'..."
     vault kv put "${admin_path}" \
-        admin_username="${ADMIN_USERNAME}" \
-        admin_password="${ADMIN_PASSWORD}"
-    info "Admin credentials stored successfully"
+        login="${ADMIN_USERNAME}" \
+        password="${ADMIN_PASSWORD}"
+    info "Instance admin credentials stored successfully"
 
     info "Storing test user credentials at '${user_path}'..."
     vault kv put "${user_path}" \
@@ -123,26 +130,45 @@ EOF
 # Verify secrets
 # ---------------------------------------------------------------------------
 verify_secrets() {
-    local admin_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/${PG_INSTANCE_ID}/admin"
+    local default_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/default"
+    local admin_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/${PG_INSTANCE_ID}/instance_admin"
     local user_path="${VAULT_MOUNT_POINT}/${VAULT_SECRET_PATH}/${PG_INSTANCE_ID}/${TEST_USERNAME}"
 
     info "Verifying stored secrets..."
 
-    local admin_user
-    admin_user=$(vault kv get -field=admin_username "${admin_path}")
-    if [ "${admin_user}" = "${ADMIN_USERNAME}" ]; then
-        info "✓ Admin username verified: ${admin_user}"
+    local default_login
+    default_login=$(vault kv get -field=login "${default_path}")
+    if [ "${default_login}" = "${ADMIN_USERNAME}" ]; then
+        info "✓ Default login verified: ${default_login}"
     else
-        error "✗ Admin username mismatch: expected '${ADMIN_USERNAME}', got '${admin_user}'"
+        error "✗ Default login mismatch: expected '${ADMIN_USERNAME}', got '${default_login}'"
+        exit 1
+    fi
+
+    local default_pass
+    default_pass=$(vault kv get -field=password "${default_path}")
+    if [ "${default_pass}" = "${ADMIN_PASSWORD}" ]; then
+        info "✓ Default password verified"
+    else
+        error "✗ Default password mismatch"
+        exit 1
+    fi
+
+    local admin_login
+    admin_login=$(vault kv get -field=login "${admin_path}")
+    if [ "${admin_login}" = "${ADMIN_USERNAME}" ]; then
+        info "✓ Instance admin login verified: ${admin_login}"
+    else
+        error "✗ Instance admin login mismatch: expected '${ADMIN_USERNAME}', got '${admin_login}'"
         exit 1
     fi
 
     local admin_pass
-    admin_pass=$(vault kv get -field=admin_password "${admin_path}")
+    admin_pass=$(vault kv get -field=password "${admin_path}")
     if [ "${admin_pass}" = "${ADMIN_PASSWORD}" ]; then
-        info "✓ Admin password verified"
+        info "✓ Instance admin password verified"
     else
-        error "✗ Admin password mismatch"
+        error "✗ Instance admin password mismatch"
         exit 1
     fi
 
