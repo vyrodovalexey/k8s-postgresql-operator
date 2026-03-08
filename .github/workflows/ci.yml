@@ -112,7 +112,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests]
-    if: github.event_name == 'pull_request'
     permissions:
       contents: read
       pull-requests: read
