@@ -484,7 +484,7 @@ jobs:
       - name: Validate dashboard JSON syntax
         run: |
           echo "==> Validating dashboard JSON syntax..."
-          for file in monitoring/grafana/*.json; do
+          for file in monitoring/grafana/dashboards/*.json; do
             if jq empty "$file" 2>/dev/null; then
               echo "  ✓ $(basename "$file"): valid JSON"
             else
@@ -508,7 +508,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, govulncheck, unit-tests, functional-tests]
+    needs: [sonarcloud]
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -585,7 +585,7 @@ jobs:
     name: Build & Release
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests]
+    needs: [sonarcloud]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -681,7 +681,7 @@ jobs:
     name: Docker Build & Push
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests]
+    needs: [build-release]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -808,7 +808,7 @@ jobs:
     name: Helm Chart Test (PR)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, govulncheck, unit-tests]
+    needs: [sonarcloud]
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -874,7 +874,7 @@ jobs:
     name: Helm Chart Install Test (TAG)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests]
+    needs: [build-release]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
