@@ -686,6 +686,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # Required for Cosign keyless signing
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-tag: ${{ steps.meta.outputs.version }}
@@ -733,6 +734,20 @@ jobs:
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v3.7.0
+
+      - name: Sign container image with Cosign
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
 
       - name: Generate SBOM
         uses: anchore/sbom-action@deef08a0db64bfad603422135db61477b16cef56 # v0
