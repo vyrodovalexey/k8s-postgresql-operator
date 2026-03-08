@@ -160,12 +160,12 @@ func TestIntegration_VaultUserCredentialLifecycle(t *testing.T) {
 	require.NoError(t, err, "Creating PG user with Vault password should succeed")
 
 	// Step 4: Verify login with the created user
-	// Note: CreateOrUpdateUser uses pq.QuoteIdentifier for the password, which wraps it
-	// in double quotes. The actual password stored in PostgreSQL includes these quotes.
-	quotedPassword := fmt.Sprintf("%q", retrievedPassword)
+	// Note: CreateOrUpdateUser uses pq.QuoteLiteral for the password, which properly
+	// escapes it as a SQL string literal. The actual password stored in PostgreSQL
+	// is the plain password value (no extra quoting).
 	connected, err := postgresql.TestConnection(
 		ctx, pgCfg.Host, pgCfg.Port, "postgres",
-		username, quotedPassword, pgCfg.SSLMode,
+		username, retrievedPassword, pgCfg.SSLMode,
 		log, 3, 2*time.Second,
 	)
 	require.NoError(t, err, "Login with created user should succeed")
@@ -188,10 +188,9 @@ func TestIntegration_VaultUserCredentialLifecycle(t *testing.T) {
 	require.NoError(t, err, "Updating PG user password should succeed")
 
 	// Step 7: Verify login with new password
-	quotedNewPassword := fmt.Sprintf("%q", newPassword)
 	connected, err = postgresql.TestConnection(
 		ctx, pgCfg.Host, pgCfg.Port, "postgres",
-		username, quotedNewPassword, pgCfg.SSLMode,
+		username, newPassword, pgCfg.SSLMode,
 		log, 3, 2*time.Second,
 	)
 	require.NoError(t, err, "Login with updated password should succeed")

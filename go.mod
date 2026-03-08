@@ -1,6 +1,6 @@
 module github.com/vyrodovalexey/k8s-postgresql-operator
 
-go 1.25.7
+go 1.25.8
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2

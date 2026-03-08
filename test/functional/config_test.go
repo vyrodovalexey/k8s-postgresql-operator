@@ -59,7 +59,7 @@ func TestFunctional_ConfigDefaults(t *testing.T) {
 	})
 
 	t.Run("vault defaults", func(t *testing.T) {
-		assert.Equal(t, "http://0.0.0.0:8200", cfg.VaultAddr)
+		assert.Equal(t, "", cfg.VaultAddr)
 		assert.Equal(t, "role", cfg.VaultRole)
 		assert.Equal(t, "secret", cfg.VaultMountPoint)
 		assert.Equal(t, "pdb", cfg.VaultSecretPath)
@@ -124,8 +124,8 @@ func TestFunctional_ConfigEnvOverride(t *testing.T) {
 			envKey:   "VAULT_ADDR",
 			envValue: "http://vault.example.com:8200",
 			check: func(t *testing.T, cfg *config.Config) {
-				assert.Equal(t, "http://0.0.0.0:8200", cfg.VaultAddr,
-					"Default should be http://0.0.0.0:8200 (env override requires env/v6 Parse)")
+				assert.Equal(t, "", cfg.VaultAddr,
+					"Default should be empty string (env override requires env/v6 Parse)")
 			},
 		},
 		{

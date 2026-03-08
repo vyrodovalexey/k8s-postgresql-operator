@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.25.7'
+  GO_VERSION: '1.25.8'
   GOLANGCI_LINT_VERSION: 'v2.8.0'
   DOCKER_REGISTRY: ghcr.io
   DOCKER_IMAGE: ghcr.io/${{ github.repository }}
@@ -111,7 +111,7 @@ jobs:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [unit-tests]
+    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests]
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -438,6 +438,67 @@ jobs:
             coverage/e2e.out
             coverage/vault-pki.out
           retention-days: 7
+
+  # ===========================================================================
+  # Grafana Dashboard Tests (parallel with integration tests)
+  # ===========================================================================
+
+  grafana-dashboard-tests:
+    name: Grafana Dashboard Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    services:
+      victoriametrics:
+        image: victoriametrics/victoria-metrics:v1.108.1
+        ports:
+          - 8428:8428
+      grafana:
+        image: grafana/grafana:11.5.2
+        ports:
+          - 3000:3000
+        env:
+          GF_SECURITY_ADMIN_USER: admin
+          GF_SECURITY_ADMIN_PASSWORD: admin
+          GF_AUTH_ANONYMOUS_ENABLED: "true"
+          GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+          GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: ""
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Wait for Grafana to be ready
+        run: |
+          echo "Waiting for Grafana..."
+          for i in {1..30}; do
+            if curl -sf -u admin:admin http://127.0.0.1:3000/api/health; then
+              echo ""
+              echo "Grafana is ready!"
+              break
+            fi
+            echo "Attempt $i: Waiting for Grafana..."
+            sleep 2
+          done
+
+      - name: Validate dashboard JSON syntax
+        run: |
+          echo "==> Validating dashboard JSON syntax..."
+          for file in monitoring/grafana/*.json; do
+            if jq empty "$file" 2>/dev/null; then
+              echo "  ✓ $(basename "$file"): valid JSON"
+            else
+              echo "  ✗ $(basename "$file"): invalid JSON"
+              exit 1
+            fi
+          done
+
+      - name: Publish dashboards and validate
+        run: |
+          chmod +x test/monitoring/scripts/publish-dashboards.sh
+          ./test/monitoring/scripts/publish-dashboards.sh \
+            http://127.0.0.1:3000 admin admin
+
 
   # ===========================================================================
   # Build Job
